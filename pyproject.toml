@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "governed-agent"
+version = "0.1.0"
+description = "Cryptographic capability sealing, scope-bounded planning, and independent audit for LLM agents"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "jtevesnz-sys", email = "jtevesnz-sys@users.noreply.github.com"}
+]
+requires-python = ">=3.10"
+dependencies = [
+    "cryptography>=42.0.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

@@ -1,0 +1,53 @@
+"""Capability layer: cryptographic sealing and anti-rollback authority."""
+
+from .crypto import (
+    KeySize,
+    KeyExponent,
+    KeyPair,
+    SealResult,
+    VerifyResult,
+    KeyStore,
+    FileKeyStore,
+    compute_sha256,
+    compute_fingerprint_sha256,
+    generate_keypair,
+    canonicalize_json,
+    compute_canonical_hash,
+    seal,
+    verify,
+    create_keystore,
+    quick_seal,
+    quick_verify,
+)
+from .antirollback import (
+    AntirollbackAuthority,
+    Pin,
+    Checkpoint,
+    FileBackedAuthority,
+    create_antirollback_authority,
+)
+
+__all__ = [
+    "KeySize",
+    "KeyExponent",
+    "KeyPair",
+    "SealResult",
+    "VerifyResult",
+    "KeyStore",
+    "FileKeyStore",
+    "compute_sha256",
+    "compute_fingerprint_sha256",
+    "generate_keypair",
+    "canonicalize_json",
+    "compute_canonical_hash",
+    "seal",
+    "verify",
+    "create_keystore",
+    "quick_seal",
+    "quick_verify",
+    "AntirollbackAuthority",
+    "Pin",
+    "Checkpoint",
+    "FileBackedAuthority",
+    "create_antirollback_authority",
+]
