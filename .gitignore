@@ -13,5 +13,7 @@ venv/
 *.db
 *.db-shm
 *.db-wal
+.coverage
+htmlcov/
 .kcap_cache/
 .kcap_keys/
