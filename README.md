@@ -4,8 +4,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 23 passed](https://img.shields.io/badge/tests-23%20passed-brightgreen.svg)]()
-[![Coverage: 88%](https://img.shields.io/badge/coverage-88%25-brightgreen.svg)]()
+[![Tests: 35 passed](https://img.shields.io/badge/tests-35%20passed-brightgreen.svg)]()
+[![Coverage: 89%](https://img.shields.io/badge/coverage-89%25-brightgreen.svg)]()
 [![Whitepaper](https://img.shields.io/badge/paper-WHITE__PAPER.md-orange.svg)](WHITE_PAPER.md)
 [![arXiv LaTeX](https://img.shields.io/badge/arXiv-paper%2Fgoverned__agent__paper.tex-purple.svg)](paper/governed_agent_paper.tex)
 [![Blog Post](https://img.shields.io/badge/blog-BLOG__POST.md-blue.svg)](BLOG_POST.md)

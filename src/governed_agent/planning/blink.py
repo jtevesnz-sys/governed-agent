@@ -201,10 +201,54 @@ def run_mcp_server() -> None:
                 resp = {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "governed-agent-planning", "version": "0.1.0"},
+                    "serverInfo": {"name": "governed-agent-planning", "version": "0.1.2"},
                 }
             elif method == "tools/list":
-                resp = {"tools": []}
+                resp = {
+                    "tools": [
+                        {
+                            "name": "validate_task_packet",
+                            "description": "Validate a bounded task packet against BLINK safety constraints.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "packet": {
+                                        "type": "object",
+                                        "description": "Task packet containing task_id, objective, allowed_actions, prohibited_actions, acceptance_criteria.",
+                                    }
+                                },
+                                "required": ["packet"],
+                            },
+                        },
+                        {
+                            "name": "create_handoff_packet",
+                            "description": "Create a deterministic SHA-256 hash-bound handoff packet from validated task.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "packet": {"type": "object"},
+                                    "validation": {"type": "object"},
+                                },
+                                "required": ["packet", "validation"],
+                            },
+                        },
+                    ]
+                }
+            elif method == "tools/call":
+                params = request.get("params", {})
+                tool_name = params.get("name")
+                tool_args = params.get("arguments", {})
+                if tool_name == "validate_task_packet":
+                    pkt = tool_args.get("packet", {})
+                    v_res = validate(pkt)
+                    resp = {"content": [{"type": "text", "text": json.dumps(v_res)}]}
+                elif tool_name == "create_handoff_packet":
+                    pkt = tool_args.get("packet", {})
+                    val = tool_args.get("validation", {})
+                    h_res = create_handoff(pkt, val)
+                    resp = {"content": [{"type": "text", "text": json.dumps(h_res)}]}
+                else:
+                    resp = {"isError": True, "content": [{"type": "text", "text": f"Unknown tool: {tool_name}"}]}
             else:
                 resp = {}
 

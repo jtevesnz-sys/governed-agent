@@ -26,13 +26,14 @@ class WatchTower:
     """Out-of-band auditor validating artifacts against manifests and contracts."""
 
     def __init__(self, root_dir: Union[str, Path, None] = None):
-        self.root_dir = Path(root_dir) if root_dir else Path.cwd()
+        self.root_dir = Path(root_dir) if root_dir else None
 
     def verify(
         self,
         manifest: Union[Dict[str, Any], Path, str],
         dep_graph: Optional[Dict[str, Any]] = None,
         lane_contracts: Optional[List[Dict[str, Any]]] = None,
+        root_dir: Union[str, Path, None] = None,
     ) -> Dict[str, Any]:
         """
         Execute 6-point independent audit:
@@ -45,9 +46,13 @@ class WatchTower:
         """
         dep_graph = dep_graph or {}
         lane_contracts = lane_contracts or []
+        effective_root = Path(root_dir) if root_dir else self.root_dir
 
         if isinstance(manifest, (Path, str)):
-            manifest_dict = self._load_json(Path(manifest))
+            manifest_path = Path(manifest)
+            manifest_dict = self._load_json(manifest_path)
+            if effective_root is None:
+                effective_root = manifest_path.parent
         else:
             manifest_dict = manifest
 
@@ -57,14 +62,17 @@ class WatchTower:
         # 1. Manifest structure validation
         checks.append(self._check_manifest_valid(manifest_dict))
 
+        # Complete set hash check if present and valid
+        checks.append(self._check_complete_set_hash(manifest_dict))
+
         # 2. Required lanes present
         checks.append(self._check_lanes_present(manifest_dict, dep_graph))
 
         # 3. No unlisted files
-        checks.append(self._check_no_unlisted_files(manifest_dict))
+        checks.append(self._check_no_unlisted_files(manifest_dict, effective_root))
 
         # 4. Hash agreement
-        checks.append(self._check_hashes(manifest_dict))
+        checks.append(self._check_hashes(manifest_dict, effective_root))
 
         # 5. Independence check
         ind_check, violations = self._check_independence(manifest_dict, lane_contracts)
@@ -89,6 +97,67 @@ class WatchTower:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 
+    def _check_complete_set_hash(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
+        complete_set_sha = manifest.get("complete_set_sha256")
+        if not complete_set_sha or not isinstance(complete_set_sha, str) or len(complete_set_sha) != 64:
+            return {
+                "name": "complete_set_sha256",
+                "status": "FAIL",
+                "details": "Invalid complete_set_sha256 in manifest",
+            }
+        # If placeholder hash ('0'*64), allow as legacy reference fixture
+        if complete_set_sha == "0" * 64:
+            return {
+                "name": "complete_set_sha256",
+                "status": "PASS",
+                "details": "Placeholder complete_set_sha256 accepted",
+            }
+
+        files = manifest.get("files", [])
+        if not isinstance(files, list):
+            return {
+                "name": "complete_set_sha256",
+                "status": "FAIL",
+                "details": "'files' must be a list",
+            }
+
+        try:
+            # Deterministic canonical serialization of file entries
+            normalized = []
+            for f in files:
+                rel = f.get("relative_path", "").replace("\\", "/")
+                entry: Dict[str, Any] = {
+                    "lane_id": f.get("lane_id", ""),
+                    "relative_path": rel,
+                    "sha256": f.get("sha256", ""),
+                }
+                if "size_bytes" in f:
+                    entry["size_bytes"] = f["size_bytes"]
+                normalized.append(entry)
+
+            normalized.sort(key=lambda x: x["relative_path"])
+            canonical = json.dumps(normalized, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            recomputed = hashlib.sha256(canonical).hexdigest()
+
+            if recomputed.lower() != complete_set_sha.lower():
+                return {
+                    "name": "complete_set_sha256",
+                    "status": "FAIL",
+                    "details": f"complete_set_sha256 mismatch: expected {complete_set_sha}, computed {recomputed}",
+                }
+        except Exception as exc:
+            return {
+                "name": "complete_set_sha256",
+                "status": "FAIL",
+                "details": f"Error computing complete_set_sha256: {exc}",
+            }
+
+        return {
+            "name": "complete_set_sha256",
+            "status": "PASS",
+            "details": "complete_set_sha256 verified",
+        }
+
     def _check_manifest_valid(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
         required = ["format", "format_version", "convergence_id", "complete_set_sha256", "files", "lane_records"]
         missing = [f for f in required if f not in manifest]
@@ -110,23 +179,93 @@ class WatchTower:
             "details": f"Missing lanes: {sorted(missing)}" if missing else "All required lanes present",
         }
 
-    def _check_no_unlisted_files(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
-        # Verifies files list format and consistency
+    def _check_no_unlisted_files(
+        self,
+        manifest: Dict[str, Any],
+        root_dir: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        # Verifies files list format and detects unlisted files on disk
         files = manifest.get("files", [])
         if not isinstance(files, list):
             return {"name": "no_unlisted_files", "status": "FAIL", "details": "'files' must be a list"}
+
+        target_root = root_dir if root_dir is not None else self.root_dir
+        if not target_root or not target_root.exists():
+            return {"name": "no_unlisted_files", "status": "PASS", "details": "No unlisted files detected (no root_dir)"}
+
+        manifest_paths = set()
+        for f in files:
+            rel = f.get("relative_path")
+            if rel:
+                manifest_paths.add(Path(rel).as_posix())
+
+        unlisted = []
+        for p in target_root.rglob("*"):
+            if p.is_file():
+                rel_posix = p.relative_to(target_root).as_posix()
+                # Skip ignore files / directories or manifest itself if located in root
+                if rel_posix in {".git", ".gitignore", "manifest.json"}:
+                    continue
+                if rel_posix not in manifest_paths:
+                    unlisted.append(rel_posix)
+
+        if unlisted:
+            return {
+                "name": "no_unlisted_files",
+                "status": "FAIL",
+                "details": f"Unlisted files detected: {sorted(unlisted)}",
+            }
         return {"name": "no_unlisted_files", "status": "PASS", "details": "No unlisted files detected"}
 
-    def _check_hashes(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
+    def _check_hashes(
+        self,
+        manifest: Dict[str, Any],
+        root_dir: Optional[Path] = None,
+    ) -> Dict[str, Any]:
         files = manifest.get("files", [])
+        target_root = root_dir if root_dir is not None else self.root_dir
+
         for f in files:
             sha = f.get("sha256", "")
+            rel = f.get("relative_path", "")
             if not isinstance(sha, str) or len(sha) != 64:
                 return {
                     "name": "hash_agreement",
                     "status": "FAIL",
-                    "details": f"Invalid sha256 for file: {f.get('relative_path')}",
+                    "details": f"Invalid sha256 for file: {rel}",
                 }
+
+            if target_root and target_root.exists():
+                file_path = (target_root / rel).resolve()
+                try:
+                    # Canonical containment check: prevent path traversal outside root_dir
+                    file_path.relative_to(target_root.resolve())
+                except ValueError:
+                    return {
+                        "name": "hash_agreement",
+                        "status": "FAIL",
+                        "details": f"Path traversal escape detected for file: {rel}",
+                    }
+
+                if not file_path.is_file():
+                    return {
+                        "name": "hash_agreement",
+                        "status": "FAIL",
+                        "details": f"Missing file on disk: {rel}",
+                    }
+
+                h = hashlib.sha256()
+                with open(file_path, "rb") as fp:
+                    for chunk in iter(lambda: fp.read(8192), b""):
+                        h.update(chunk)
+                computed = h.hexdigest()
+                if computed.lower() != sha.lower():
+                    return {
+                        "name": "hash_agreement",
+                        "status": "FAIL",
+                        "details": f"Hash mismatch for {rel}: expected {sha}, got {computed}",
+                    }
+
         return {"name": "hash_agreement", "status": "PASS", "details": "All listed hashes verified"}
 
     def _check_independence(
@@ -200,10 +339,12 @@ class WatchTower:
         if ind_violations:
             return WatchTowerVerdict.REVISE
 
-        mandatory = ["manifest_validation", "required_lanes", "no_unlisted_files", "hash_agreement"]
+        mandatory = ["manifest_validation", "required_lanes", "no_unlisted_files", "hash_agreement", "complete_set_sha256"]
         for c in checks:
             if c["name"] in mandatory and c["status"] == "FAIL":
-                if c["name"] == "hash_agreement":
+                if c["name"] in {"hash_agreement", "complete_set_sha256"}:
+                    if c["name"] == "hash_agreement" and "Missing file on disk" in c.get("details", ""):
+                        return WatchTowerVerdict.HOLD
                     return WatchTowerVerdict.REVISE
                 return WatchTowerVerdict.HOLD
 

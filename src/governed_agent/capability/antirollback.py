@@ -11,6 +11,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -87,7 +88,11 @@ class AntirollbackAuthority:
 class FileBackedAuthority(AntirollbackAuthority):
     """File-backed antirollback authority."""
 
-    def __init__(self, storage_path: Union[str, Path, None] = None):
+    def __init__(
+        self,
+        storage_path: Union[str, Path, None] = None,
+        authority_key: Optional[bytes] = None,
+    ):
         if storage_path is None:
             default_dir = os.environ.get(
                 "GOVERNED_AGENT_ANTIROLLBACK_DIR",
@@ -101,29 +106,83 @@ class FileBackedAuthority(AntirollbackAuthority):
         self._lock = threading.RLock()
         self._pins_file = self.storage_path / "pins.json"
         self._counter_file = self.storage_path / "counter.txt"
+        self._key_file = self.storage_path / "authority.key"
+
+        if authority_key is not None:
+            self._authority_key = authority_key
+        elif self._key_file.exists():
+            try:
+                self._authority_key = self._key_file.read_bytes()
+            except Exception:
+                self._authority_key = b"governed-agent-authority-secret"
+        else:
+            env_key = os.environ.get("GOVERNED_AGENT_AUTHORITY_KEY")
+            if env_key:
+                self._authority_key = env_key.encode("utf-8")
+            else:
+                self._authority_key = os.urandom(32)
+                try:
+                    self._key_file.write_bytes(self._authority_key)
+                except Exception:
+                    pass
 
         self._pins: Dict[str, List[Pin]] = defaultdict(list)
         self._counter = 0
 
         self._load()
 
+    def _sign(self, data: str) -> str:
+        return hmac.new(self._authority_key, data.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def _verify_pin_signature(self, pin: Pin) -> bool:
+        pin_data = f"{pin.chain_id}|{pin.checkpoint_hash}|{pin.sequence}|{pin.timestamp_utc}|{pin.pin_id}"
+        expected_hmac = self._sign(pin_data)
+        # Fallback check for legacy pins signed with old format f"{chain_id}|{checkpoint_hash}|{sequence}|{timestamp}|{counter}"
+        legacy_secret = b"governed-agent-authority-secret"
+        legacy_expected = hashlib.sha256(legacy_secret + pin_data.encode("utf-8")).hexdigest()
+        if hmac.compare_digest(pin.authority_signature, expected_hmac):
+            return True
+        if hmac.compare_digest(pin.authority_signature, legacy_expected):
+            return True
+        # Check counter variant for backward compatibility
+        for c in range(0, self._counter + 100):
+            old_data = f"{pin.chain_id}|{pin.checkpoint_hash}|{pin.sequence}|{pin.timestamp_utc}|{c}"
+            if hmac.compare_digest(pin.authority_signature, hashlib.sha256(legacy_secret + old_data.encode("utf-8")).hexdigest()):
+                return True
+            if hmac.compare_digest(pin.authority_signature, self._sign(old_data)):
+                return True
+        return False
+
     def _load(self) -> None:
         with self._lock:
-            if self._pins_file.exists():
-                try:
-                    with open(self._pins_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        for chain_id, pins_data in data.items():
-                            self._pins[chain_id] = [Pin.from_dict(p) for p in pins_data]
-                except Exception:
-                    pass
-
             if self._counter_file.exists():
                 try:
                     with open(self._counter_file, "r", encoding="utf-8") as f:
                         self._counter = int(f.read().strip())
                 except Exception:
                     self._counter = 0
+
+            if self._pins_file.exists():
+                with open(self._pins_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    for chain_id, pins_data in data.items():
+                        loaded_pins = []
+                        last_seq = 0
+                        for p in pins_data:
+                            pin_obj = Pin.from_dict(p)
+                            # Authenticate pin on load
+                            if not self._verify_pin_signature(pin_obj):
+                                raise ValueError(
+                                    f"Anti-rollback state integrity error: invalid signature for pin {pin_obj.pin_id} in chain {chain_id}"
+                                )
+                            # Monotonic sequence integrity
+                            if pin_obj.sequence <= last_seq:
+                                raise ValueError(
+                                    f"Anti-rollback state integrity error: sequence non-monotonic ({pin_obj.sequence} <= {last_seq})"
+                                )
+                            last_seq = pin_obj.sequence
+                            loaded_pins.append(pin_obj)
+                        self._pins[chain_id] = loaded_pins
 
     def _save(self) -> None:
         with self._lock:
@@ -133,10 +192,6 @@ class FileBackedAuthority(AntirollbackAuthority):
 
             with open(self._counter_file, "w", encoding="utf-8") as f:
                 f.write(str(self._counter))
-
-    def _sign(self, data: str) -> str:
-        authority_secret = b"governed-agent-authority-secret"
-        return hashlib.sha256(authority_secret + data.encode("utf-8")).hexdigest()
 
     def get_trusted_now_utc(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -199,8 +254,9 @@ class FileBackedAuthority(AntirollbackAuthority):
             self._counter += 1
             trusted_now = self.get_trusted_now_utc()
             timestamp = trusted_now.isoformat().replace("+00:00", "Z")
+            pin_id = f"pin_{uuid.uuid4().hex[:16]}"
 
-            pin_data = f"{chain_id}|{checkpoint_hash}|{sequence}|{timestamp}|{self._counter}"
+            pin_data = f"{chain_id}|{checkpoint_hash}|{sequence}|{timestamp}|{pin_id}"
             signature = self._sign(pin_data)
 
             pin = Pin(
@@ -209,6 +265,7 @@ class FileBackedAuthority(AntirollbackAuthority):
                 sequence=sequence,
                 timestamp_utc=timestamp,
                 authority_signature=signature,
+                pin_id=pin_id,
             )
 
             self._pins[chain_id].append(pin)

@@ -164,7 +164,7 @@ The auditor returns discrete verdict enums: $\mathtt{PASS}$, $\mathtt{HOLD}$, or
 \section{Empirical Evaluation}
 
 \subsection{Implementation Profile}
-The Tier 1 reference implementation comprises roughly 1,200 lines of pure Python code requiring only \texttt{cryptography} and \texttt{pydantic}. The suite contains 23 unit tests executing with 88\% statement coverage.
+The Tier 1 reference implementation comprises roughly 1,350 lines of pure Python code requiring only \texttt{cryptography} and \texttt{pydantic}. The suite contains 35 unit tests executing with 89\% statement coverage.
 
 \begin{table}[h]
 \centering
@@ -176,9 +176,10 @@ The Tier 1 reference implementation comprises roughly 1,200 lines of pure Python
 \texttt{governed\_agent.capability.crypto} & RSA-2048 sealing, keystore, canonical JSON & 390 & 88\% \\
 \texttt{governed\_agent.capability.antirollback} & Monotonic pins, freshness intervals & 337 & 86\% \\
 \texttt{governed\_agent.planning.blink} & Task packet validation, handoffs & 218 & 78\% \\
-\texttt{governed\_agent.audit.watchtower} & Out-of-band 6-point manifest audit & 213 & 99\% \\
+\texttt{governed\_agent.audit.watchtower} & Out-of-band 6-point manifest audit & 280 & 96\% \\
+\texttt{governed\_agent.hermes.boundary} & Hermes runtime execution boundary & 65 & 88\% \\
 \midrule
-\textbf{Total Reference Implementation} & & \textbf{1,239} & \textbf{88\%} \\
+\textbf{Total Reference Implementation} & & \textbf{1,350} & \textbf{89\%} \\
 \bottomrule
 \end{tabular}
 \caption{Codebase profile and test coverage for the Tier 1 reference release.}
@@ -192,7 +193,7 @@ Benchmarks were executed on an AMD processor running Python 3.14 on Windows 11. 
     \item \textbf{Capability Sealing (RSA-SHA256):} $0.42$\,ms.
     \item \textbf{Capability Token Verification:} $0.08$\,ms.
     \item \textbf{End-to-End Governance Cycle:} $0.05$\,s (Planning $\rightarrow$ Capability $\rightarrow$ Audit).
-    \item \textbf{Full Test Suite (23 tests):} $0.54$\,s total runtime.
+    \item \textbf{Full Test Suite (35 tests):} $0.84$\,s total runtime.
 \end{itemize}
 
 Given that typical frontier LLM generation latencies range from $500$\,ms to $3,000$\,ms per turn, the cryptographic verification overhead accounts for \textbf{less than 0.1\%} of turn latency.

@@ -14,7 +14,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -316,30 +316,74 @@ def verify(
     receipt_bytes: bytes,
     signature: bytes,
     trusted_expected_context: Dict[str, Any],
-    keypair: KeyPair,
+    key: Union[KeyPair, str, RSAPublicKey],
+    max_age_seconds: Optional[int] = None,
+    allowed_actions: Optional[Set[str]] = None,
 ) -> VerifyResult:
     """
-    Verify a capability receipt and signature against expected context.
+    Verify a capability receipt and signature against expected context and constraints.
     verify(...) -> VerifyResult(status='ACCEPT' | 'HOLD')
+    Accepts KeyPair, PEM public key string, or RSAPublicKey object.
+    Enforces optional max_age_seconds freshness and allowed_actions validation.
     """
     try:
         receipt = json.loads(receipt_bytes.decode("utf-8"))
     except Exception:
         return VerifyResult(status="HOLD", reason="Invalid receipt JSON")
 
+    # Action allowlist enforcement if provided
+    request_data = receipt.get("request", {})
+    action = request_data.get("action")
+    if allowed_actions is not None:
+        if not action or action not in allowed_actions:
+            return VerifyResult(
+                status="HOLD",
+                reason=f"Action '{action}' is not in allowed_actions",
+            )
+
+    # Expiry / freshness interval enforcement
+    if max_age_seconds is not None:
+        timestamp_str = receipt.get("timestamp")
+        if not timestamp_str:
+            return VerifyResult(status="HOLD", reason="Missing receipt timestamp for freshness check")
+        try:
+            receipt_time = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+            if receipt_time.tzinfo is None:
+                receipt_time = receipt_time.replace(tzinfo=timezone.utc)
+            now_utc = datetime.now(timezone.utc)
+            age = (now_utc - receipt_time).total_seconds()
+            if age < 0:
+                return VerifyResult(status="HOLD", reason="Receipt timestamp in the future")
+            if age > max_age_seconds:
+                return VerifyResult(status="HOLD", reason=f"Receipt expired: age {age:.1f}s > {max_age_seconds}s")
+        except Exception as exc:
+            return VerifyResult(status="HOLD", reason=f"Invalid timestamp format: {exc}")
+
+    key_id = getattr(key, "key_id", "")
+    fingerprint = getattr(key, "fingerprint_sha256", "")
+
     if receipt.get("trusted_context") != trusted_expected_context:
         return VerifyResult(
             status="HOLD",
             reason="Trusted context mismatch",
-            key_id=keypair.key_id,
-            fingerprint_sha256=keypair.fingerprint_sha256,
+            key_id=key_id,
+            fingerprint_sha256=fingerprint,
         )
 
     if not CRYPTOGRAPHY_AVAILABLE:
         return VerifyResult(status="HOLD", reason="Cryptography library unavailable")
 
     try:
-        loaded_pub = serialization.load_pem_public_key(keypair.public_key_pem.encode("utf-8"))
+        if isinstance(key, KeyPair):
+            loaded_pub = serialization.load_pem_public_key(key.public_key_pem.encode("utf-8"))
+        elif isinstance(key, str):
+            loaded_pub = serialization.load_pem_public_key(key.encode("utf-8"))
+            fingerprint = fingerprint or compute_fingerprint_sha256(key)
+        elif isinstance(key, RSAPublicKey):
+            loaded_pub = key
+        else:
+            return VerifyResult(status="HOLD", reason=f"Unsupported key type: {type(key)}")
+
         if not isinstance(loaded_pub, RSAPublicKey):
             return VerifyResult(status="HOLD", reason="Expected RSAPublicKey")
         loaded_pub.verify(signature, receipt_bytes, padding.PKCS1v15(), hashes.SHA256())
@@ -347,14 +391,14 @@ def verify(
         return VerifyResult(
             status="HOLD",
             reason=f"Signature verification failed: {exc}",
-            key_id=keypair.key_id,
-            fingerprint_sha256=keypair.fingerprint_sha256,
+            key_id=key_id,
+            fingerprint_sha256=fingerprint,
         )
 
     return VerifyResult(
         status="ACCEPT",
-        key_id=keypair.key_id,
-        fingerprint_sha256=keypair.fingerprint_sha256,
+        key_id=key_id,
+        fingerprint_sha256=fingerprint,
     )
 
 

@@ -7,6 +7,7 @@ from .blink import (
     create_handoff,
     render_brief,
     validate,
+    enabled,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "validate",
     "render_brief",
     "create_handoff",
+    "enabled",
 ]

@@ -26,6 +26,7 @@ from .antirollback import (
     FileBackedAuthority,
     InMemoryAuthority,
     create_antirollback_authority,
+    create_checkpoint,
 )
 
 __all__ = [
@@ -52,4 +53,5 @@ __all__ = [
     "FileBackedAuthority",
     "InMemoryAuthority",
     "create_antirollback_authority",
+    "create_checkpoint",
 ]

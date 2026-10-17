@@ -30,6 +30,81 @@ from governed_agent.planning.blink import (
 from governed_agent.audit.watchtower import WatchTower, WatchTowerVerdict
 
 
+def test_verify_with_public_key_pem_and_constraints():
+    kp = generate_keypair(key_size=2048, key_id="key-constraints")
+    req = {"action": "read_data", "target": "table_1"}
+    ctx = {"session": "sess_01"}
+    sealed = seal(req, ctx, kp)
+
+    # 1. Verify using public_key_pem string only (no private key needed)
+    res_pub = verify(sealed.receipt_bytes, sealed.signature, ctx, kp.public_key_pem)
+    assert res_pub.status == "ACCEPT"
+
+    # 2. Verify with allowed_actions check
+    res_allowed = verify(sealed.receipt_bytes, sealed.signature, ctx, kp.public_key_pem, allowed_actions={"read_data"})
+    assert res_allowed.status == "ACCEPT"
+
+    res_disallowed = verify(sealed.receipt_bytes, sealed.signature, ctx, kp.public_key_pem, allowed_actions={"mutate_data"})
+    assert res_disallowed.status == "HOLD"
+    assert "not in allowed_actions" in res_disallowed.reason
+
+    # 3. Verify freshness / expiry
+    res_fresh = verify(sealed.receipt_bytes, sealed.signature, ctx, kp.public_key_pem, max_age_seconds=60)
+    assert res_fresh.status == "ACCEPT"
+
+    res_expired = verify(sealed.receipt_bytes, sealed.signature, ctx, kp.public_key_pem, max_age_seconds=0)
+    assert res_expired.status == "HOLD"
+    assert "Receipt expired" in res_expired.reason
+
+
+def test_blink_mcp_server_tools_list_and_call():
+    import io
+    import sys
+    from governed_agent.planning.blink import run_mcp_server
+
+    req_init = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+    req_list = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    req_call = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "validate_task_packet",
+            "arguments": {
+                "packet": {
+                    "task_id": "T-MCP",
+                    "objective": "test mcp",
+                    "allowed_actions": ["read"],
+                    "prohibited_actions": ["activate", "deploy", "publish", "send", "overwrite"],
+                    "acceptance_criteria": ["test ok"],
+                }
+            },
+        },
+    })
+    input_data = f"{req_init}\n{req_list}\n{req_call}\n"
+
+    old_stdin = sys.stdin
+    old_stdout = sys.stdout
+    try:
+        sys.stdin = io.StringIO(input_data)
+        sys.stdout = io.StringIO()
+        run_mcp_server()
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdin = old_stdin
+        sys.stdout = old_stdout
+
+    lines = [json.loads(line) for line in output.strip().split("\n") if line.strip()]
+    assert len(lines) == 3
+    # Check tools/list has tools
+    tools = lines[1]["result"]["tools"]
+    assert len(tools) >= 2
+    assert any(t["name"] == "validate_task_packet" for t in tools)
+    # Check tools/call succeeded
+    call_content = json.loads(lines[2]["result"]["content"][0]["text"])
+    assert call_content["blink_result"] == "PASS"
+
+
 def test_file_backed_authority_full_lifecycle():
     with tempfile.TemporaryDirectory() as tmpdir:
         auth = FileBackedAuthority(tmpdir)
@@ -76,6 +151,35 @@ def test_file_backed_authority_full_lifecycle():
         reloaded = FileBackedAuthority(tmpdir)
         assert reloaded.get_current_pin(chain_id).sequence == 2
         assert reloaded.get_chain_status(chain_id)["counter"] == 2
+
+
+def test_file_backed_authority_tamper_detected():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        auth = FileBackedAuthority(tmpdir)
+        chain_id = "test_chain"
+        auth.create_pin(chain_id, "hash1", 1)
+
+        # 1. Corrupt pins.json signature/sequence
+        pins_file = Path(tmpdir) / "pins.json"
+        data = json.loads(pins_file.read_text(encoding="utf-8"))
+        data[chain_id][0]["sequence"] = 999  # Tampered sequence without valid signature
+        pins_file.write_text(json.dumps(data), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Anti-rollback state integrity error"):
+            FileBackedAuthority(tmpdir)
+
+        # 2. Test non-monotonic sequence in stored pins in a fresh dir
+        with tempfile.TemporaryDirectory() as tmpdir2:
+            auth2 = FileBackedAuthority(tmpdir2, authority_key=b"k"*32)
+            p1 = auth2.create_pin("c2", "h1", 1)
+            p2 = auth2.create_pin("c2", "h2", 2)
+            # Swap sequence order
+            pins_file = Path(tmpdir2) / "pins.json"
+            data = json.loads(pins_file.read_text(encoding="utf-8"))
+            data["c2"][1]["sequence"] = 0
+            pins_file.write_text(json.dumps(data), encoding="utf-8")
+            with pytest.raises(ValueError, match="Anti-rollback state integrity error"):
+                FileBackedAuthority(tmpdir2, authority_key=b"k"*32)
 
 
 def test_factory_create_antirollback_authority():

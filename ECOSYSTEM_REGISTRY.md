@@ -38,10 +38,10 @@ This guide contains pre-formatted submission snippets, links, and text for listi
 
 ### B. PyPI (Python Package Index)
 * **Package Name:** `governed-agent`
-* **Current Version:** `0.1.0`
-* **Distribution Files Ready:**
-  * `dist/governed_agent-0.1.0-py3-none-any.whl`
-  * `dist/governed_agent-0.1.0.tar.gz`
+* **Current Version:** `0.1.2`
+* **Artifact Files:**
+  * `dist/governed_agent-0.1.2-py3-none-any.whl`
+  * `dist/governed_agent-0.1.2.tar.gz`
 * **Upload Command:**
   ```bash
   twine upload dist/*

@@ -126,7 +126,7 @@ Security controls in AI systems often introduce unacceptable latency. We benchma
 * **RSA-2048 Keypair Generation:** ~12.4 ms
 * **Capability Sealing (RSA-SHA256):** ~0.42 ms
 * **Capability Verification:** ~0.08 ms
-* **Full Unit Test Suite (23 tests):** **0.54 seconds**
+* **Full Unit Test Suite (35 tests):** **0.84 seconds**
 
 Compared to LLM inference latencies (500 ms – 3,000 ms per turn), cryptographic capability verification consumes **less than 0.1% of the turn duration**. The security boundary is mathematically rigorous and computationally invisible.
 
@@ -134,7 +134,7 @@ Compared to LLM inference latencies (500 ms – 3,000 ms per turn), cryptographi
 
 ## A Focused Release Backed by a Broader Engineering Effort
 
-`governed-agent` is released as a focused Tier 1 package: roughly 1,200 lines of pure Python (`cryptography` + `pydantic`), 23 unit tests measuring 88% code coverage, a full technical whitepaper, and an end-to-end demo.
+`governed-agent` is released as a focused Tier 1 package: roughly 1,350 lines of pure Python (`cryptography` + `pydantic`), 35 unit tests measuring 89% code coverage, a full technical whitepaper, and an end-to-end demo.
 
 It originates from a broader private engineering effort of roughly 20,000 lines spanning our research and agent operations at Mercenarios AI. That broader codebase includes multi-role factory lifecycles, research corpora, intake sanitization pipelines, and memory indices. We are keeping the broader operating system private for continued commercial development while making the core governance architecture available for the community to inspect, test, and adopt.
 

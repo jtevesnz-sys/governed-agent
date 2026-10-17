@@ -62,7 +62,7 @@ Governed Agent brings 1960s operating system capability security to LLMs:
 🛡️ **Out-of-Band Audit (Watchtower):** Manifests and file diffs are audited outside the LLM loop. No model self-certification.
 
 **Tweet 5 (Open Source & Fast):**
-Pure Python, zero bloat (~1,240 LOC), 23 unit tests (88% coverage), <0.5ms verification overhead per turn.
+Pure Python, zero bloat (~1,350 LOC), 35 unit tests (89% coverage), <0.5ms verification overhead per turn.
 
 Star the repo and read the whitepaper:
 GitHub: https://github.com/jtevesnz-sys/governed-agent
