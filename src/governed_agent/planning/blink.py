@@ -44,6 +44,7 @@ def validate(packet: Dict[str, Any]) -> Dict[str, Any]:
     Validate a bounded task packet.
 
     Checks:
+    - BLINK enabled check (respects GOVERNED_AGENT_BLINK_ENABLED).
     - task_id, objective, and acceptance_criteria presence.
     - allowed_actions within safe bounded set.
     - No high-risk actions in allowed_actions.
@@ -55,6 +56,17 @@ def validate(packet: Dict[str, Any]) -> Dict[str, Any]:
 
     task_id = packet.get("task_id", "")
     objective = packet.get("objective", "")
+
+    if not enabled():
+        warnings.append("BLINK validation is disabled via GOVERNED_AGENT_BLINK_ENABLED=false")
+        return {
+            "task_id": task_id,
+            "objective": objective,
+            "blink_result": "PASS",
+            "failures": [],
+            "warnings": warnings,
+            "execution_authority": False,
+        }
     allowed = set(packet.get("allowed_actions", []))
     prohibited = set(packet.get("prohibited_actions", []))
     criteria = packet.get("acceptance_criteria", [])

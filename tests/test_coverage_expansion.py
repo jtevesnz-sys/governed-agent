@@ -234,6 +234,18 @@ def test_crypto_verify_failure_cases():
 def test_blink_validation_edges():
     assert enabled() is True
 
+    # Disabled BLINK validation bypass check
+    import os
+    os.environ["GOVERNED_AGENT_BLINK_ENABLED"] = "false"
+    try:
+        assert enabled() is False
+        disabled_res = validate({"task_id": "T-DISABLED"})
+        assert disabled_res["blink_result"] == "PASS"
+        assert disabled_res["execution_authority"] is False
+        assert any("disabled" in w for w in disabled_res["warnings"])
+    finally:
+        os.environ["GOVERNED_AGENT_BLINK_ENABLED"] = "true"
+
     # Missing task_id
     p1 = {
         "objective": "obj",

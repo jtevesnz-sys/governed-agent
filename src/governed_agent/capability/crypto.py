@@ -125,8 +125,17 @@ class FileKeyStore(KeyStore):
             private_path = self.base_path / f"{keypair.key_id}_private.pem"
             public_path = self.base_path / f"{keypair.key_id}_public.pem"
 
-            with open(private_path, "w", encoding="utf-8") as f:
-                f.write(keypair.private_key_pem)
+            # Open and write private key with owner-only permissions where supported
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            mode = 0o600
+            fd = os.open(private_path, flags, mode)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(keypair.private_key_pem)
+            except Exception:
+                os.close(fd)
+                raise
+
             with open(public_path, "w", encoding="utf-8") as f:
                 f.write(keypair.public_key_pem)
 
