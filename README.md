@@ -7,6 +7,7 @@
 [![Tests: 23 passed](https://img.shields.io/badge/tests-23%20passed-brightgreen.svg)]()
 [![Coverage: 88%](https://img.shields.io/badge/coverage-88%25-brightgreen.svg)]()
 [![Whitepaper](https://img.shields.io/badge/paper-WHITE__PAPER.md-orange.svg)](WHITE_PAPER.md)
+[![Blog Post](https://img.shields.io/badge/blog-BLOG__POST.md-blue.svg)](BLOG_POST.md)
 
 ---
 
