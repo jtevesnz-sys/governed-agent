@@ -4,6 +4,8 @@ __pycache__/
 *.egg-info/
 dist/
 exports/
+X_CAMPAIGN_QUEUE.md
+X_GROWTH_QUEUE.md
 build/
 .eggs/
 .pytest_cache/
