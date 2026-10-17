@@ -16,7 +16,7 @@ We present **Governed Agent**, a deterministic capability-security architecture 
 2. **Separation of Planning and Execution Authority (BLINK):** The planning phase generates hash-bound task packets where execution authority is strictly withheld (`execution_authority: False`), enforcing deterministic prohibition gates before dispatch.
 3. **Out-of-Band Independent Audit (Watchtower):** A decoupled verification engine evaluates all mutated artifacts, directories, and manifests against cryptographic baselines, issuing non-negotiable `PASS`, `HOLD`, or `REVISE` verdicts without model self-certification.
 
-We release a reference implementation consisting of ~1,240 lines of Python code, verified across 16 unit tests, proving that deterministic security primitives can be layered over existing agent frameworks with sub-millisecond overhead.
+We release a reference implementation consisting of ~1,240 lines of Python code, verified across 23 unit tests (88% coverage), proving that deterministic security primitives can be layered over existing agent frameworks with sub-millisecond overhead.
 
 ---
 
@@ -133,7 +133,7 @@ Benchmarked on an AMD / Windows 11 host with Python 3.14:
 * **Keypair Generation (RSA-2048):** ~12.4 ms
 * **Capability Sealing (RSA-SHA256):** ~0.42 ms
 * **Capability Verification:** ~0.08 ms
-* **Full Test Suite (16 unit tests):** **0.24 seconds** total execution time.
+* **Full Test Suite (23 unit tests):** **0.54 seconds** total execution time (88% coverage).
 
 Compared to typical LLM inference latencies (500 ms – 3,000 ms per turn), the cryptographic verification overhead is **less than 0.1% of the turn duration**, rendering the governance boundary computationally negligible.
 
