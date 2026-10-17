@@ -29,4 +29,4 @@ jobs:
 
       - name: Run unit test suite
         run: |
-          pytest -v --tb=short
+          pytest -v --tb=short --cov=governed_agent --cov-report=term-missing
