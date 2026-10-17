@@ -27,6 +27,8 @@ We built and open-sourced **Governed Agent** to replace prompt-based safety with
 
 The core reference package is ~1,240 lines of pure Python (`cryptography` + `pydantic`). Verification overhead is <0.5ms per turn—negligible compared to LLM latency.
 
+It is designed as a focused Tier 1 release: roughly 1,200 lines covering capability sealing, scope-bound planning, and independent audit. It comes from a broader private engineering effort of roughly 20,000 lines spanning our research and agent operations. We are keeping the broader operating system private for continued development while making the core governance architecture available to inspect and build on.
+
 Repo: https://github.com/jtevesnz-sys/governed-agent  
 Whitepaper / Architecture: https://github.com/jtevesnz-sys/governed-agent/blob/main/WHITE_PAPER.md
 

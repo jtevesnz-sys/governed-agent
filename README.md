@@ -9,6 +9,16 @@
 
 ---
 
+## A focused public release, backed by a larger body of work
+
+`governed-agent` is designed as a focused Tier 1 release: roughly 1,200 lines of code covering cryptographic capability sealing, scope-bound planning validation, and independent audit primitives. Its purpose is to give developers a clear, usable foundation for governed agents.
+
+It comes from a broader private engineering effort of roughly 20,000 lines. That work spans the systems and workflows behind our research and agent operations. We are keeping it private while making the core governance ideas available for others to inspect and build on.
+
+The distinction is deliberate: **a focused release that shows the engineering clearly, with the broader operating system protected for continued development.**
+
+---
+
 ## Technical Whitepaper
 
 For the formal mathematical specification, threat model, cryptographic formulation, and benchmark evaluation, read the **[Technical Whitepaper (WHITE_PAPER.md)](WHITE_PAPER.md)**.
