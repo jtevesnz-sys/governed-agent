@@ -5,6 +5,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Tests: 16 passed](https://img.shields.io/badge/tests-16%20passed-brightgreen.svg)]()
+[![Whitepaper](https://img.shields.io/badge/paper-WHITE__PAPER.md-orange.svg)](WHITE_PAPER.md)
+
+---
+
+## Technical Whitepaper
+
+For the formal mathematical specification, threat model, cryptographic formulation, and benchmark evaluation, read the **[Technical Whitepaper (WHITE_PAPER.md)](WHITE_PAPER.md)**.
 
 ---
 
