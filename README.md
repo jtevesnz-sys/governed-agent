@@ -196,6 +196,14 @@ pytest
 
 ---
 
+## Community & Contact
+
+* **GitHub Discussions:** Ask questions, share architectures, or propose integrations in [Discussions](https://github.com/jtevesnz-sys/governed-agent/discussions).
+* **Security Advisories:** Report potential vulnerabilities privately via [Security Advisories](https://github.com/jtevesnz-sys/governed-agent/security).
+* **Inquiries & Pilots:** Open a discussion thread or reach out via project GitHub handles.
+
+---
+
 ## License
 
 MIT License. Copyright (c) 2026 jtevesnz-sys.
