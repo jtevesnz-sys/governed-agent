@@ -1,0 +1,56 @@
+name: Bug Report
+description: File a bug report for verification failures, serialization issues, or unexpected errors
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue! Please ensure this report does not contain private keys, confidential paths, or sensitive credentials.
+  - type: input
+    id: version
+    attributes:
+      label: Governed Agent Version
+      description: What version of governed-agent are you running? (e.g. 0.1.0)
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      description: What version of Python are you using?
+      placeholder: "3.11.8"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the Bug
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: Steps or minimal code snippet to reproduce the behavior.
+      placeholder: |
+        from governed_agent.capability import generate_keypair, seal, verify
+        ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened (include error messages or stack traces)?
+    validations:
+      required: true

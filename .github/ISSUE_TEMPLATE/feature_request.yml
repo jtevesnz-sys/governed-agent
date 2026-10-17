@@ -1,0 +1,30 @@
+name: Feature Request
+description: Propose a new capability primitive, verifier check, or architectural improvement
+title: "[FEATURE]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature proposals should respect our core invariants: deterministic mathematical security, Plan != Execution Authority, and minimal dependency overhead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Is your feature request related to a specific governance limitation or operational risk?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the proposed interface, signature, or verification primitive.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or workarounds you've considered.
+    validations:
+      required: false
