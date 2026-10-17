@@ -7,7 +7,7 @@ name = "governed-agent"
 version = "0.1.0"
 description = "Cryptographic capability sealing, scope-bounded planning, and independent audit for LLM agents"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "jtevesnz-sys", email = "jtevesnz-sys@users.noreply.github.com"}
 ]
