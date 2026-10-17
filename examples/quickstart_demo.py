@@ -134,7 +134,7 @@ def run_demo():
         "format": "governed.manifest.v1",
         "format_version": "1.0",
         "convergence_id": "CONV-MIGRATION-2026",
-        "complete_set_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "complete_set_sha256": "93daf4ebda52898d400f8a468d25acb42387afbd5b1fc42b31cbd7d5eb216b25",
         "lane_records": [{"lane_id": "LANE_SCHEMA"}],
         "files": [
             {
