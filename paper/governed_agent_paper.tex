@@ -40,11 +40,12 @@
 \begin{document}
 
 \maketitle
+\noindent\textbf{Reference-release correction (v0.1.3):} The bundled file-backed anti-rollback store is not a durable monotonic anchor. An older valid snapshot of both state files can be replayed, and the default HMAC key is co-located with the state. Keep key custody in a separate trust domain and use an independent monotonic anchor before production security-gate use. The empirical data below describe an earlier revision and are not refreshed v0.1.3 measurements.\par\medskip
 
 \begin{abstract}
 Autonomous Large Language Model (LLM) agent architectures operate predominantly under \emph{ambient authority}. When tools are exposed to an agent runtime, tool invocation decisions depend upon probabilistic system prompts or secondary text classification guardrails. Under adversarial prompt injection, jailbreaking, or semantic drift, these linguistic boundaries fail, permitting unauthorized mutations. Furthermore, prevailing designs encourage models to evaluate the validity of their own output, introducing acute self-certification hazards. 
 
-We present \textbf{Governed Agent}, a deterministic security architecture for LLM agent tool dispatch based on classical capability-based operating systems. Governed Agent enforces three architectural invariants: (1) \emph{Cryptographic Capability Sealing (KCAP)}, requiring unforgeable RSA-SHA256 tokens and monotonic anti-rollback sequence anchors before tool invocation; (2) \emph{Separation of Planning and Execution Authority (BLINK)}, enforcing that multi-turn decomposition yields strictly unprivileged task packets ($\mathtt{execution\_authority: False}$); and (3) \emph{Out-of-Band Independent Audit (Watchtower)}, decoupling verification from the generating model through external multi-point manifest inspections emitting non-negotiable $\mathtt{PASS}$, $\mathtt{HOLD}$, or $\mathtt{REVISE}$ verdicts. Benchmarks demonstrate that full capability verification introduces sub-millisecond overhead ($<0.5$\,ms per turn), proving that mathematical security primitives can enforce hard operational boundaries on autonomous models without sacrificing runtime performance.
+We present \textbf{Governed Agent}, a reference implementation of three primitives: (1) \emph{Cryptographic Capability Sealing (KCAP)}, RSA-SHA256 tokens bound to verified requests; (2) \emph{Separation of Planning and Execution Authority (BLINK)}, generating unprivileged task packets ($\mathtt{execution\_authority: False}$); and (3) \emph{Out-of-Band Audit (Watchtower)}, checking real artifacts against a manifest outside the generating model. Local sequence checks do not prevent replay of a complete older state snapshot. Production security requires separately protected key custody, an independent monotonic anchor, and review of dispatcher and auditor isolation. Earlier microbenchmarks are historical rather than v0.1.3 performance claims.
 \end{abstract}
 
 \section{Introduction}
@@ -74,15 +75,15 @@ We model the LLM as an unprivileged, non-deterministic, and potentially untruste
     \item \textbf{Privilege Replay:} Emitter replay of previously authorized actions outside their intended temporal or functional window.
 \end{itemize}
 
-The tool execution dispatcher, the authority key store, and the independent audit engine execute out-of-band in isolated host processes.
+This reference package does not itself isolate the dispatcher, authority key store, or auditor in separate processes. A deployment must enforce those trust boundaries. The default file-backed key is co-located with the state.
 
 \subsection{Security Invariants}
 Governed Agent enforces four non-negotiable invariants:
 \begin{itemize}
     \item \textbf{Invariant 1 (Absence of Ambient Authority):} No mutating tool call is dispatched without a mathematically verified capability token signed by a designated custodian.
     \item \textbf{Invariant 2 (Plan $\neq$ Execution Authority):} Task planning and decomposition must output task packets where $\mathtt{execution\_authority} = \text{False}$.
-    \item \textbf{Invariant 3 (Monotonic Anti-Rollback):} State checkpoints enforce monotonically increasing sequence pins ($Seq_{n+1} > Seq_n$). Replay or rollback of revoked or expired tokens is strictly rejected.
-    \item \textbf{Invariant 4 (Out-of-Band Audit):} The executing agent cannot certify its own output. Build artifacts and directory mutations are validated solely by an external auditor against signed manifests.
+    \item \textbf{Invariant 3 (Loaded-State Sequence Checks):} New pins must increase relative to currently loaded state ($Seq_{n+1} > Seq_n$). The bundled file-backed state can still be restored wholesale to an older valid snapshot.
+    \item \textbf{Invariant 4 (Out-of-Band Audit):} A verifier outside the generating model checks actual artifacts against a manifest. The reference code does not authenticate the manifest; provenance and verifier isolation are deployment responsibilities.
 \end{itemize}
 
 \section{Architecture and Core Primitives}
@@ -115,7 +116,7 @@ At dispatch, the execution boundary evaluates:
 Any mismatch in the trusted context (e.g., modified task ID, altered role, or tampered parameters) immediately results in a fail-closed $\mathtt{HOLD}$ state.
 
 \subsection{Monotonic Anti-Rollback Authority}
-Digital signatures alone are insufficient to defend against replay attacks where an agent resubmits an earlier valid token. Governed Agent couples capability checkpoints to a monotonic sequence authority:
+Digital signatures alone are insufficient to defend against replay attacks where an agent resubmits an earlier valid token. The reference implementation checks pins against loaded state; independent monotonicity is not provided by its local files:
 \begin{equation}
     \text{Pin} = (\text{ChainID}, \text{Hash}_{\text{chk}}, \text{Sequence}, T_{\text{UTC}}, \sigma_{\text{auth}})
 \end{equation}
@@ -164,7 +165,7 @@ The auditor returns discrete verdict enums: $\mathtt{PASS}$, $\mathtt{HOLD}$, or
 \section{Empirical Evaluation}
 
 \subsection{Implementation Profile}
-The Tier 1 reference implementation comprises roughly 1,350 lines of pure Python code requiring only \texttt{cryptography} and \texttt{pydantic}. The suite contains 35 unit tests executing with 89\% statement coverage.
+The historical implementation profile below describes an earlier revision. The v0.1.3 reference release passed 63 local unit tests with 90\% statement coverage; the module line counts and microbenchmarks below were not recalculated for v0.1.3.
 
 \begin{table}[h]
 \centering
@@ -208,7 +209,7 @@ Given that typical frontier LLM generation latencies range from $500$\,ms to $3,
 \textbf{Dimension} & \textbf{LangChain/CrewAI} & \textbf{Anthropic MCP} & \textbf{NeMo Guardrails} & \textbf{Governed Agent} \\
 \midrule
 Execution Authority & Ambient & Server-level & Secondary prompt & \textbf{RSA Capability Token} \\
-Replay/Rollback Defense & None & None & None & \textbf{Monotonic Sequence Pins} \\
+Replay/Rollback Defense & Context-specific & Context-specific & Context-specific & \textbf{Local sequence checks only} \\
 Plan/Execution Separation & Blended & Blended & None & \textbf{Enforced ($\mathtt{auth=False}$)} \\
 Audit Mechanism & Self-certification & None & Secondary prompt & \textbf{Out-of-band 6-point check} \\
 Failure Mode & Unbounded mutation & Client error & Evasion/bypass & \textbf{Fail-closed ($\mathtt{HOLD}$)} \\
@@ -228,7 +229,7 @@ Failure Mode & Unbounded mutation & Client error & Evasion/bypass & \textbf{Fail
 
 \section{Conclusion and Future Work}
 
-Probabilistic prompt guardrails cannot guarantee safety in autonomous agent systems with mutating capabilities. Governed Agent demonstrates that classical capability-based security, monotonic anti-rollback state, and decoupled out-of-band audits provide mathematically deterministic controls at negligible latency overhead.
+Probabilistic prompt guardrails cannot guarantee safety in autonomous agent systems with mutating capabilities. Governed Agent demonstrates reference implementations of capability signatures, loaded-state sequence checks, and artifact auditing under explicit trust assumptions. It is not a production rollback-resistant security gate without separately protected key custody and an independent monotonic anchor.
 
 Future research includes formalizing Layer 3 (consent-gated case envelopes) and Layer 4 (receipt stores with automated secret sanitization), alongside integrating Hardware Security Modules (HSMs) and RFC 3161 timestamping authorities for enterprise monotonic pinning.
 

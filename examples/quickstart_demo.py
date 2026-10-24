@@ -7,8 +7,11 @@ Demonstrates the three core layers of Governed Agent:
 3. Audit (Watchtower): Out-of-band 6-point verification before release.
 """
 
+import hashlib
+import json
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 # Add src to path if running directly from repo root
 repo_root = Path(__file__).resolve().parents[1]
@@ -85,7 +88,7 @@ def run_demo():
         checkpoint_hash=handoff["packet_sha256"],
         sequence=1,
     )
-    print(f"    - Monotonic Sequence Anchor: Seq={pin1.sequence}, PinID={pin1.pin_id}")
+    print(f"    - Local sequence pin (not an external anchor): Seq={pin1.sequence}, PinID={pin1.pin_id}")
 
     # Seal a capability token explicitly binding action + runtime context
     request = {
@@ -123,40 +126,44 @@ def run_demo():
         raise RuntimeError("Failed: Replay attack should have been detected")
     except ValueError as e:
         print(f"    - Anti-Replay Defense: Caught expected exception -> {e}")
-    print("    -> Capability layer sealed and anti-rollback verified.\n")
+    print("    -> Capability signature and loaded-state sequence check verified; full-snapshot replay is not prevented.\n")
 
     # -------------------------------------------------------------------------
     # STEP 3: AUDIT LAYER (WATCHTOWER)
     # Out-of-band verification of build artifacts against declared manifest
     # -------------------------------------------------------------------------
     print("[3] AUDIT LAYER: Executing out-of-band 6-point independent audit...")
-    manifest = {
-        "format": "governed.manifest.v1",
-        "format_version": "1.0",
-        "convergence_id": "CONV-MIGRATION-2026",
-        "complete_set_sha256": "93daf4ebda52898d400f8a468d25acb42387afbd5b1fc42b31cbd7d5eb216b25",
-        "lane_records": [{"lane_id": "LANE_SCHEMA"}],
-        "files": [
-            {
-                "relative_path": "migrations/20261017_add_index.sql",
-                "lane_id": "LANE_SCHEMA",
-                "sha256": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
-            }
-        ],
-    }
-    dep_graph = {
-        "nodes": [
-            {"lane_id": "LANE_SCHEMA", "node_type": "LANE"}
-        ]
-    }
-
-    auditor = WatchTower()
-    audit_result = auditor.verify(manifest, dep_graph)
-    print(f"    - Audit Verdict: {audit_result['verdict']}")
-    for check in audit_result["checks"]:
-        print(f"      * {check['name']}: {check['status']}")
-
-    assert audit_result["verdict"] == WatchTowerVerdict.PASS.value
+    with TemporaryDirectory() as root_dir:
+        artifact = Path(root_dir) / "migrations" / "20261017_add_index.sql"
+        artifact.parent.mkdir()
+        artifact.write_bytes(b"CREATE INDEX idx_account_id ON transactions (account_id);\n")
+        files = [{
+            "relative_path": "migrations/20261017_add_index.sql",
+            "lane_id": "LANE_SCHEMA",
+            "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        }]
+        complete_set = hashlib.sha256(
+            json.dumps(files, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        manifest = {
+            "format": "governed.manifest.v1",
+            "format_version": "1.0",
+            "convergence_id": "CONV-MIGRATION-2026",
+            "complete_set_sha256": complete_set,
+            "lane_records": [{"lane_id": "LANE_SCHEMA"}],
+            "files": files,
+        }
+        dep_graph = {
+            "nodes": [
+                {"lane_id": "LANE_SCHEMA", "node_type": "LANE"}
+            ]
+        }
+        auditor = WatchTower(root_dir)
+        audit_result = auditor.verify(manifest, dep_graph)
+        print(f"    - Audit Verdict: {audit_result['verdict']}")
+        for check in audit_result["checks"]:
+            print(f"      * {check['name']}: {check['status']}")
+        assert audit_result["verdict"] == WatchTowerVerdict.PASS.value
     print("    -> Audit completed: Artifact accepted without model self-certification.\n")
 
     print("============================================================")

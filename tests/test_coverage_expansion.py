@@ -1,5 +1,6 @@
 """Comprehensive unit tests expanding coverage across capability, planning, and audit."""
 
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -234,13 +235,13 @@ def test_crypto_verify_failure_cases():
 def test_blink_validation_edges():
     assert enabled() is True
 
-    # Disabled BLINK validation bypass check
+    # Disabled BLINK validation must fail closed rather than mint a PASS.
     import os
     os.environ["GOVERNED_AGENT_BLINK_ENABLED"] = "false"
     try:
         assert enabled() is False
         disabled_res = validate({"task_id": "T-DISABLED"})
-        assert disabled_res["blink_result"] == "PASS"
+        assert disabled_res["blink_result"] == "FAIL"
         assert disabled_res["execution_authority"] is False
         assert any("disabled" in w for w in disabled_res["warnings"])
     finally:
@@ -293,12 +294,17 @@ def test_watchtower_invalid_manifest_structures():
             "format": "governed.manifest.v1",
             "format_version": "1.0",
             "convergence_id": "C1",
-            "complete_set_sha256": "0" * 64,
+            "complete_set_sha256": "",
             "lane_records": [],
             "files": [{"relative_path": "a.txt", "sha256": "short"}],
         }
+        normalized = [{"lane_id": "", "relative_path": "a.txt", "sha256": "short"}]
+        bad_hash_manifest["complete_set_sha256"] = hashlib.sha256(
+            json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
         res_hash = auditor.verify(bad_hash_manifest)
         assert res_hash["verdict"] == WatchTowerVerdict.REVISE.value
+        assert any(c["name"] == "hash_agreement" and c["status"] == "FAIL" for c in res_hash["checks"])
 
         # From file path
         manifest_file = Path(tmpdir) / "manifest.json"

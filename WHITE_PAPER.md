@@ -5,6 +5,8 @@
 **Code Repository:** [https://github.com/jtevesnz-sys/governed-agent](https://github.com/jtevesnz-sys/governed-agent)  
 **Date:** October 2026  
 
+**v0.1.3 reference-release correction:** The bundled file-backed pin authority is not a durable monotonic anchor: a valid replay of both state files restores older state. Its default HMAC key is co-located with the state, so a party able to read the key and write the state can forge pins. The code is a reference implementation, not a production security gate without separate key custody, independent monotonic storage, and independent review. Historical benchmarks below describe an earlier revision, not a fresh v0.1.3 benchmark.
+
 ---
 
 ## Abstract
@@ -12,11 +14,11 @@
 Autonomous Large Language Model (LLM) agent frameworks (such as LangChain, AutoGen, CrewAI, and the Model Context Protocol) operate predominantly under *ambient authority*. When an agent is granted access to a toolset—such as mutating database queries, system execution, or network calls—the execution boundary relies on probabilistic prompt-following ("*do not delete production tables*") or heuristic secondary text classifiers. Under adversarial prompt injection, jailbreaking, or contextual reasoning drift, these probabilistic barriers fail, granting unauthorized execution authority to unvetted LLM outputs. Furthermore, existing architectures allow models to self-certify their own work, creating severe alignment vulnerabilities.
 
 We present **Governed Agent**, a deterministic capability-security architecture for autonomous LLM agent execution. Governed Agent enforces three core invariants:
-1. **Cryptographic Capability Sealing (KCAP):** Privileged tool invocations require unforgeable RSA-SHA256 digital capability tokens bound to explicit task IDs, valid timestamps, and monotonic sequence pins that reject replay and state rollback.
+1. **Cryptographic Capability Sealing (KCAP):** Privileged tool invocations require RSA-SHA256 tokens bound to the verified request and trusted context. The bundled pin store checks sequences against its current local state; durable rollback resistance needs an external anchor.
 2. **Separation of Planning and Execution Authority (BLINK):** The planning phase generates hash-bound task packets where execution authority is strictly withheld (`execution_authority: False`), enforcing deterministic prohibition gates before dispatch.
 3. **Out-of-Band Independent Audit (Watchtower):** A decoupled verification engine evaluates all mutated artifacts, directories, and manifests against cryptographic baselines, issuing non-negotiable `PASS`, `HOLD`, or `REVISE` verdicts without model self-certification.
 
-We release a reference implementation consisting of ~1,350 lines of Python code, verified across 35 unit tests (89% coverage), proving that deterministic security primitives can be layered over existing agent frameworks with sub-millisecond overhead.
+The v0.1.3 reference implementation passed 63 local unit tests with 90% statement coverage on Python 3.14. These local checks do not establish production-ready rollback resistance or cross-version benchmarks.
 
 ---
 
@@ -30,7 +32,7 @@ This architecture introduces two critical systemic vulnerabilities:
 
 In operating systems and distributed systems, this class of problem was resolved decades ago through **capability-based security** (Dennis and Van Horn, 1966) and **separation of duties** (Saltzer and Schroeder, 1975). An entity should not perform an action because it possesses identity or ambient presence; it must present an unforgeable, scoped token explicitly authorizing the action.
 
-**Governed Agent** adapts these classical computer science principles to LLM orchestration. By introducing mathematical verification—RSA-2048/SHA-256 capability tokens, monotonic anti-rollback state anchors, and out-of-band audit verifiers—it converts agent safety from a probabilistic linguistic question into a deterministic cryptographic guarantee.
+**Governed Agent** adapts these principles through RSA-2048/SHA-256 capability checks, sequence-checked pin state, and an out-of-band audit implementation. These checks have explicit key, state, dispatcher, and manifest trust assumptions; they do not alone guarantee system safety.
 
 ---
 
@@ -48,8 +50,8 @@ The execution boundary (the local or remote tool dispatcher) and the audit engin
 ### 2.2 Core Invariants
 * **Invariant 1 (No Ambient Authority):** No mutating tool may execute without presenting a cryptographically valid capability token signed by an authorized custodian key.
 * **Invariant 2 (Plan $\neq$ Execution Authority):** An agent tasked with planning, scoping, or decomposing an objective cannot generate execution authority for that plan.
-* **Invariant 3 (Monotonic Non-Replay):** Capability checkpoints and sequence numbers cannot be rolled back or replayed; $Seq_{n+1} > Seq_n$ is strictly enforced.
-* **Invariant 4 (External Audit):** Artifact validity is determined solely by external deterministic verification against signed manifests, never by model self-evaluation.
+* **Invariant 3 (Sequence Checks):** A new pin must have $Seq_{n+1} > Seq_n$ relative to loaded state. The bundled file-backed implementation does not enforce this across a full older-state snapshot restore.
+* **Invariant 4 (External Audit):** Artifact validity is checked against a manifest and real files by a verifier independent of the generating model. This reference implementation does not authenticate the manifest itself; its provenance must be established separately.
 
 ---
 
@@ -84,7 +86,7 @@ $$\text{Verify}_{K_{\text{public}}}(\text{Receipt}, \sigma) \overset{?}{=} \text
 If verification fails or if the runtime context mismatches the sealed token, the tool dispatcher immediately fails closed with status `HOLD`.
 
 ### 3.2 Monotonic Anti-Rollback Authority
-To prevent replay attacks and state resurrection, the system integrates a monotonic state authority. Each state checkpoint is bound to a pin containing:
+The reference implementation checks new sequence numbers against its loaded state. This does not prevent replay of the complete file-backed state; durable non-replay requires an independently protected monotonic authority. Each state checkpoint is bound to a pin containing:
 $$\text{Pin} = (\text{ChainID}, \text{CheckpointHash}, \text{Sequence}, \text{Timestamp}, \sigma_{\text{auth}})$$
 
 When a new pin is submitted:
@@ -115,7 +117,7 @@ Rather than asking the LLM if its file generation or compilation succeeded, Watc
 
 Watchtower returns deterministic verdict enums:
 $$\text{Verdict} \in \{\text{PASS}, \text{HOLD}, \text{REVISE}\}$$
-The model cannot self-certify; build acceptance requires an out-of-band `PASS`.
+The model cannot self-certify when the caller isolates the verifier and independently authenticates the manifest; a `PASS` alone does not establish manifest provenance.
 
 ---
 
@@ -133,7 +135,7 @@ Benchmarked on an AMD / Windows 11 host with Python 3.14:
 * **Keypair Generation (RSA-2048):** ~12.4 ms
 * **Capability Sealing (RSA-SHA256):** ~0.42 ms
 * **Capability Verification:** ~0.08 ms
-* **Full Test Suite (35 unit tests):** **0.84 seconds** total execution time (89% coverage).
+* **Earlier full test suite (35 unit tests):** **0.84 seconds** total execution time (89% coverage); not the v0.1.3 suite. The v0.1.3 suite passed 63 tests with 90% local coverage.
 
 Compared to typical LLM inference latencies (500 ms – 3,000 ms per turn), the cryptographic verification overhead is **less than 0.1% of the turn duration**, rendering the governance boundary computationally negligible.
 
@@ -144,7 +146,7 @@ Compared to typical LLM inference latencies (500 ms – 3,000 ms per turn), the 
 | Feature / Dimension | LangChain / CrewAI | Anthropic MCP | NeMo / Guardrails | Governed Agent |
 | :--- | :--- | :--- | :--- | :--- |
 | **Execution Authorization** | Ambient tool availability | Server-level permission | Secondary LLM text filter | **Cryptographic RSA-2048 token** |
-| **Replay & Rollback Defense** | None | None | None | **Monotonic sequence pinning** |
+| **Replay & Rollback Defense** | Context-dependent | Context-dependent | Context-dependent | **Loaded-state sequence checks; external anchor required for durable rollback resistance** |
 | **Plan / Execution Separation** | Blended in context | Blended in context | None | **Strict (`execution_authority: False`)** |
 | **Audit Mechanism** | Model self-evaluation | None | Model text evaluation | **Out-of-band 6-point verification** |
 | **Failure State** | Uncontrolled tool call | Client error / Open | Filter bypass | **Fail-closed (`HOLD`)** |
@@ -153,7 +155,7 @@ Compared to typical LLM inference latencies (500 ms – 3,000 ms per turn), the 
 
 ## 6. Applications: Enterprise Automation & Mercenarios AI
 
-In production environments, Governed Agent eliminates the existential risk of agent deployments. For enterprise automation systems (such as those engineered at Mercenarios AI):
+The reference code is not qualified as a production security gate. With independently protected keys, state anchors, and a trusted dispatcher/auditor, its primitives may support enterprise automation; the following are architectural examples, not established deployment guarantees:
 * **Marketing & Campaign Automation:** Agents can draft copy, analyze market trends, and organize creative assets autonomously, but cannot mutate live ad spend or publish campaigns without cryptographic custodian tokens.
 * **Database & Infrastructure Migration:** Schema planning is isolated from migration execution; all produced migration artifacts are verified out-of-band by Watchtower before release.
 * **Auditability & Compliance:** Every privileged action produces an immutable 21-field cryptographic receipt containing input hashes, timestamps, and custodian signatures, satisfying enterprise compliance requirements.
@@ -162,7 +164,7 @@ In production environments, Governed Agent eliminates the existential risk of ag
 
 ## 7. Conclusion & Future Work
 
-Prompt-based guardrails are insufficient for high-consequence autonomous AI agents. By enforcing cryptographic capability sealing, monotonic anti-rollback state, and decoupled out-of-band audits, Governed Agent establishes a provably deterministic foundation for agent orchestration.
+Prompt-based guardrails are insufficient for high-consequence autonomous AI agents. This reference implementation demonstrates cryptographic capability checks, sequence-checked local pin state, and out-of-band artifact audits under explicit trust assumptions; production security and durable anti-rollback require further independent protections.
 
 Future work includes formalizing Layer 3 (consent-gated case envelopes) and Layer 4 (receipt stores with automated secret sanitization), as well as integrating hardware security modules (HSMs) and RFC 3161 timestamping authorities for enterprise monotonic pinning.
 

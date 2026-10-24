@@ -72,15 +72,22 @@ class GovernedToolBoundary:
         if verdict.status != "ACCEPT":
             raise ExecutionDeniedError(f"Capability verification failed: {verdict.reason}")
 
-        # Check payload action matches tool_name
+        # The signed request schema is {"action": tool_name, **tool_kwargs}.
+        # Compare JSON representations, not Python equality (True == 1), before dispatch.
         try:
             receipt_data = json.loads(receipt_bytes.decode("utf-8"))
-            req_action = receipt_data.get("request", {}).get("action")
-            if req_action and req_action != tool_name:
-                raise ExecutionDeniedError(
-                    f"Receipt action '{req_action}' does not match requested tool '{tool_name}'"
-                )
-        except json.JSONDecodeError:
-            raise ExecutionDeniedError("Malformed receipt JSON")
+            request = receipt_data["request"]
+            if not isinstance(request, dict) or not isinstance(args, dict) or "action" in args:
+                raise ExecutionDeniedError("Invalid signed tool request or invocation arguments")
+            canonical = lambda value: json.dumps(
+                value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+            )
+            # Freeze the entire JSON argument tree and dispatch only this validated copy.
+            args_snapshot = json.loads(canonical(args))
+            expected = {"action": tool_name, **args_snapshot}
+            if canonical(request) != canonical(expected):
+                raise ExecutionDeniedError("Invocation does not match signed request")
+        except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
+            raise ExecutionDeniedError("Malformed signed tool request or invocation arguments") from exc
 
-        return self._tools[tool_name](**args)
+        return self._tools[tool_name](**args_snapshot)

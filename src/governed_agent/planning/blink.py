@@ -62,10 +62,11 @@ def validate(packet: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "task_id": task_id,
             "objective": objective,
-            "blink_result": "PASS",
-            "failures": [],
+            "blink_result": "FAIL",
+            "failures": ["BLINK validation is disabled"],
             "warnings": warnings,
             "execution_authority": False,
+            "not_authorization": True,
         }
     allowed = set(packet.get("allowed_actions", []))
     prohibited = set(packet.get("prohibited_actions", []))
@@ -119,10 +120,8 @@ def validate(packet: Dict[str, Any]) -> Dict[str, Any]:
 
 def render_brief(packet: Dict[str, Any], result: Optional[Dict[str, Any]] = None) -> str:
     """Render a deterministic reasoning brief from a valid task packet."""
-    if result is None:
-        result = validate(packet)
-
-    if result["blink_result"] != "PASS":
+    # A caller-provided result is not proof for this packet; check it afresh.
+    if not enabled() or validate(packet)["blink_result"] != "PASS":
         raise ValueError("Task packet failed validation")
 
     lines = [
@@ -155,10 +154,8 @@ def render_brief(packet: Dict[str, Any], result: Optional[Dict[str, Any]] = None
 
 def create_handoff(packet: Dict[str, Any], result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Create a deterministic, hash-bound handoff packet for a named executor."""
-    if result is None:
-        result = validate(packet)
-
-    if result["blink_result"] != "PASS":
+    # Never trust a cached or caller-authored PASS; disabled validation cannot mint a handoff.
+    if not enabled() or validate(packet)["blink_result"] != "PASS":
         raise ValueError("Task packet failed validation")
 
     executor = str(packet.get("executor", "")).strip()
@@ -234,14 +231,14 @@ def run_mcp_server() -> None:
                         },
                         {
                             "name": "create_handoff_packet",
-                            "description": "Create a deterministic SHA-256 hash-bound handoff packet from validated task.",
+                            "description": "Create a deterministic SHA-256 hash-bound handoff after revalidating the packet.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
                                     "packet": {"type": "object"},
-                                    "validation": {"type": "object"},
+                                    "validation": {"type": "object", "description": "Optional legacy result; ignored and revalidated."},
                                 },
-                                "required": ["packet", "validation"],
+                                "required": ["packet"],
                             },
                         },
                     ]
@@ -256,9 +253,11 @@ def run_mcp_server() -> None:
                     resp = {"content": [{"type": "text", "text": json.dumps(v_res)}]}
                 elif tool_name == "create_handoff_packet":
                     pkt = tool_args.get("packet", {})
-                    val = tool_args.get("validation", {})
-                    h_res = create_handoff(pkt, val)
-                    resp = {"content": [{"type": "text", "text": json.dumps(h_res)}]}
+                    try:
+                        h_res = create_handoff(pkt)
+                        resp = {"content": [{"type": "text", "text": json.dumps(h_res)}]}
+                    except (ValueError, TypeError, KeyError) as exc:
+                        resp = {"isError": True, "content": [{"type": "text", "text": str(exc)}]}
                 else:
                     resp = {"isError": True, "content": [{"type": "text", "text": f"Unknown tool: {tool_name}"}]}
             else:

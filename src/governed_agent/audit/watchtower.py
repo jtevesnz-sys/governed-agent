@@ -105,14 +105,6 @@ class WatchTower:
                 "status": "FAIL",
                 "details": "Invalid complete_set_sha256 in manifest",
             }
-        # If placeholder hash ('0'*64), allow as legacy reference fixture
-        if complete_set_sha == "0" * 64:
-            return {
-                "name": "complete_set_sha256",
-                "status": "PASS",
-                "details": "Placeholder complete_set_sha256 accepted",
-            }
-
         files = manifest.get("files", [])
         if not isinstance(files, list):
             return {
@@ -190,8 +182,8 @@ class WatchTower:
             return {"name": "no_unlisted_files", "status": "FAIL", "details": "'files' must be a list"}
 
         target_root = root_dir if root_dir is not None else self.root_dir
-        if not target_root or not target_root.exists():
-            return {"name": "no_unlisted_files", "status": "PASS", "details": "No unlisted files detected (no root_dir)"}
+        if target_root is None or not target_root.is_dir():
+            return {"name": "no_unlisted_files", "status": "FAIL", "details": "Artifact root directory is required"}
 
         manifest_paths = set()
         for f in files:
@@ -224,6 +216,10 @@ class WatchTower:
     ) -> Dict[str, Any]:
         files = manifest.get("files", [])
         target_root = root_dir if root_dir is not None else self.root_dir
+        if target_root is None or not target_root.is_dir():
+            return {"name": "hash_agreement", "status": "FAIL", "details": "Artifact root directory is required"}
+        if not isinstance(files, list) or not files:
+            return {"name": "hash_agreement", "status": "FAIL", "details": "At least one artifact file is required"}
 
         for f in files:
             sha = f.get("sha256", "")
@@ -234,37 +230,48 @@ class WatchTower:
                     "status": "FAIL",
                     "details": f"Invalid sha256 for file: {rel}",
                 }
+            if "size_bytes" in f and (type(f["size_bytes"]) is not int or f["size_bytes"] < 0):
+                return {"name": "hash_agreement", "status": "FAIL", "details": f"Invalid size_bytes for file: {rel}"}
 
-            if target_root and target_root.exists():
-                file_path = (target_root / rel).resolve()
-                try:
-                    # Canonical containment check: prevent path traversal outside root_dir
-                    file_path.relative_to(target_root.resolve())
-                except ValueError:
-                    return {
-                        "name": "hash_agreement",
-                        "status": "FAIL",
-                        "details": f"Path traversal escape detected for file: {rel}",
-                    }
+            if not target_root.is_dir():
+                return {"name": "hash_agreement", "status": "FAIL", "details": "Artifact root directory is unavailable"}
+            file_path = (target_root / rel).resolve()
+            try:
+                # Canonical containment check: prevent path traversal outside root_dir
+                file_path.relative_to(target_root.resolve())
+            except ValueError:
+                return {
+                    "name": "hash_agreement",
+                    "status": "FAIL",
+                    "details": f"Path traversal escape detected for file: {rel}",
+                }
 
-                if not file_path.is_file():
-                    return {
-                        "name": "hash_agreement",
-                        "status": "FAIL",
-                        "details": f"Missing file on disk: {rel}",
-                    }
+            if not file_path.is_file():
+                return {
+                    "name": "hash_agreement",
+                    "status": "FAIL",
+                    "details": f"Missing file on disk: {rel}",
+                }
 
-                h = hashlib.sha256()
-                with open(file_path, "rb") as fp:
-                    for chunk in iter(lambda: fp.read(8192), b""):
-                        h.update(chunk)
-                computed = h.hexdigest()
-                if computed.lower() != sha.lower():
-                    return {
-                        "name": "hash_agreement",
-                        "status": "FAIL",
-                        "details": f"Hash mismatch for {rel}: expected {sha}, got {computed}",
-                    }
+            h = hashlib.sha256()
+            actual_size = 0
+            with open(file_path, "rb") as fp:
+                for chunk in iter(lambda: fp.read(8192), b""):
+                    actual_size += len(chunk)
+                    h.update(chunk)
+            if "size_bytes" in f and actual_size != f["size_bytes"]:
+                return {
+                    "name": "hash_agreement",
+                    "status": "FAIL",
+                    "details": f"Size mismatch for {rel}: expected {f['size_bytes']}, got {actual_size}",
+                }
+            computed = h.hexdigest()
+            if computed.lower() != sha.lower():
+                return {
+                    "name": "hash_agreement",
+                    "status": "FAIL",
+                    "details": f"Hash mismatch for {rel}: expected {sha}, got {computed}",
+                }
 
         return {"name": "hash_agreement", "status": "PASS", "details": "All listed hashes verified"}
 

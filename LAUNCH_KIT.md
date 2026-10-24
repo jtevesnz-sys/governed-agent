@@ -1,6 +1,6 @@
 # Governed Agent: Launch Announcement & Social Distribution Kit
 
-This kit contains copy-paste-ready technical posts designed to establish engineering priority, attract stars and contributors on GitHub, and generate enterprise inbound inquiries for Mercenarios AI.
+This kit contains draft technical posts for Governed Agent. For v0.1.3, describe it only as a reference implementation: file-backed state can be rolled back by restoring a complete older snapshot, the default key is co-located with that state, and Watchtower does not authenticate manifest provenance. Performance figures below come from an earlier revision and have not been rerun for v0.1.3. Review each post before publishing; this kit is not a publication receipt.
 
 ---
 
@@ -21,9 +21,9 @@ Safety guardrails today are predominantly probabilistic: system prompts ("please
 We built and open-sourced **Governed Agent** to replace prompt-based safety with classical capability-based security (Dennis & Van Horn, 1966) and separation of duties:
 
 1. **Cryptographic Capability Sealing (KCAP):** Mutating tools cannot execute without an RSA-2048 / SHA-256 digital capability token signed by a custodian key. Tokens are bound to exact task IDs, execution contexts, and expiry.
-2. **Monotonic Anti-Rollback:** State checkpoints use an external monotonic sequence anchor ($Seq_{n+1} > Seq_n$). If an agent attempts to replay an expired or revoked capability, it raises an immediate anti-rollback violation.
+2. **Sequence-Checked Pins:** The bundled file-backed authority checks against loaded state. It does not contain an external monotonic anchor, so full valid snapshot replay is possible; keep the key separately and add an independent anchor before production security-gate use.
 3. **Plan != Authority (BLINK):** The planning layer generates hash-bound task packets where execution authority is strictly withheld (`execution_authority: False`). A model that decomposes a task cannot grant itself authority to execute it.
-4. **Out-of-Band Audit (Watchtower):** A decoupled verification script checks generated files against signed manifests (structure, missing lanes, hash agreement, independence collisions, and residue like `.tmp` or `.env` files). It emits deterministic `PASS`, `HOLD`, or `REVISE` verdicts without model self-certification.
+4. **Out-of-Band Audit (Watchtower):** An independently deployed verifier checks generated files against a caller-supplied manifest (structure, lanes, hashes, collisions, and residue). The caller must authenticate manifest provenance separately.
 
 The core reference package is ~1,240 lines of pure Python (`cryptography` + `pydantic`). Verification overhead is <0.5ms per turn—negligible compared to LLM latency.
 
@@ -55,14 +55,14 @@ If you wouldn't give a junior dev raw database admin rights based on "promising 
 Governed Agent brings 1960s operating system capability security to LLMs:
 
 🔑 **Cryptographic Sealing:** Tools require RSA-SHA256 capability tokens bound to exact task contexts.
-🔒 **Anti-Rollback:** Monotonic sequence pins prevent replay attacks ($Seq_{n+1} > Seq_n$).
+🔒 **Sequence Checks:** Pins increase against loaded state ($Seq_{n+1} > Seq_n$); full older-state replay requires an external anchor to detect.
 
 **Tweet 4 (Separation of Duties):**
 ⚡ **Plan != Authority:** Planning agents output structured task packets with `execution_authority: False`. Planning work does not authorize executing it.
 🛡️ **Out-of-Band Audit (Watchtower):** Manifests and file diffs are audited outside the LLM loop. No model self-certification.
 
 **Tweet 5 (Open Source & Fast):**
-Pure Python, zero bloat (~1,350 LOC), 35 unit tests (89% coverage), <0.5ms verification overhead per turn.
+Pure Python, zero bloat (~1,350 LOC), 63 local unit tests (90% coverage) in v0.1.3, <0.5ms verification overhead per turn.
 
 Star the repo and read the whitepaper:
 GitHub: https://github.com/jtevesnz-sys/governed-agent
@@ -81,9 +81,9 @@ Prompt-based guardrails ("please do not delete customer records") and secondary 
 At Mercenarios AI, we have open-sourced **Governed Agent**—an architectural framework that replaces prompt-based compliance with deterministic, capability-based security:
 
 🔹 **Cryptographic Capability Tokens:** Tools cannot execute without RSA-SHA256 signed tokens bound to specific task envelopes and expiry windows.
-🔹 **Monotonic Anti-Rollback:** State counters prevent token replay or restoration of revoked permissions.
+🔹 **Loaded-State Sequence Checks:** File-backed counters detect partial state inconsistency, not whole-snapshot rollback. Production use requires independent monotonic storage and key custody.
 🔹 **Separation of Planning and Authority:** Decomposing a workflow generates immutable task packets where execution authority is strictly withheld (`execution_authority: False`).
-🔹 **Out-of-Band Auditing:** Artifacts are audited against signed manifests by an external verifier, eliminating the risk of LLMs self-certifying hallucinations.
+🔹 **Out-of-Band Auditing:** When deployed independently of the generating model, Watchtower checks artifacts against a caller-supplied manifest; the caller must authenticate the manifest separately.
 
 The reference implementation is live on GitHub:
 👉 Repository: https://github.com/jtevesnz-sys/governed-agent

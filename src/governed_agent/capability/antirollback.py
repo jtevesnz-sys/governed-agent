@@ -86,7 +86,7 @@ class AntirollbackAuthority:
 
 
 class FileBackedAuthority(AntirollbackAuthority):
-    """File-backed antirollback authority."""
+    """File-backed pin authority; full snapshot replay needs an external anchor."""
 
     def __init__(
         self,
@@ -111,20 +111,22 @@ class FileBackedAuthority(AntirollbackAuthority):
         if authority_key is not None:
             self._authority_key = authority_key
         elif self._key_file.exists():
-            try:
-                self._authority_key = self._key_file.read_bytes()
-            except Exception:
-                self._authority_key = b"governed-agent-authority-secret"
+            # A missing/unreadable authority key must never become a public key.
+            self._authority_key = self._key_file.read_bytes()
+            if not self._authority_key:
+                raise ValueError("Anti-rollback authority key is empty")
         else:
             env_key = os.environ.get("GOVERNED_AGENT_AUTHORITY_KEY")
             if env_key:
                 self._authority_key = env_key.encode("utf-8")
             else:
+                if self._pins_file.exists() or self._counter_file.exists():
+                    raise ValueError("Anti-rollback state integrity error: missing authority key")
                 self._authority_key = os.urandom(32)
-                try:
-                    self._key_file.write_bytes(self._authority_key)
-                except Exception:
-                    pass
+                self._key_file.write_bytes(self._authority_key)
+
+        if not isinstance(self._authority_key, bytes) or not self._authority_key:
+            raise ValueError("Anti-rollback authority key must be nonempty bytes")
 
         self._pins: Dict[str, List[Pin]] = defaultdict(list)
         self._counter = 0
@@ -136,22 +138,8 @@ class FileBackedAuthority(AntirollbackAuthority):
 
     def _verify_pin_signature(self, pin: Pin) -> bool:
         pin_data = f"{pin.chain_id}|{pin.checkpoint_hash}|{pin.sequence}|{pin.timestamp_utc}|{pin.pin_id}"
-        expected_hmac = self._sign(pin_data)
-        # Fallback check for legacy pins signed with old format f"{chain_id}|{checkpoint_hash}|{sequence}|{timestamp}|{counter}"
-        legacy_secret = b"governed-agent-authority-secret"
-        legacy_expected = hashlib.sha256(legacy_secret + pin_data.encode("utf-8")).hexdigest()
-        if hmac.compare_digest(pin.authority_signature, expected_hmac):
-            return True
-        if hmac.compare_digest(pin.authority_signature, legacy_expected):
-            return True
-        # Check counter variant for backward compatibility
-        for c in range(0, self._counter + 100):
-            old_data = f"{pin.chain_id}|{pin.checkpoint_hash}|{pin.sequence}|{pin.timestamp_utc}|{c}"
-            if hmac.compare_digest(pin.authority_signature, hashlib.sha256(legacy_secret + old_data.encode("utf-8")).hexdigest()):
-                return True
-            if hmac.compare_digest(pin.authority_signature, self._sign(old_data)):
-                return True
-        return False
+        # Only a MAC under the configured private authority key can authenticate a pin.
+        return hmac.compare_digest(pin.authority_signature, self._sign(pin_data))
 
     def _load(self) -> None:
         with self._lock:
@@ -159,8 +147,10 @@ class FileBackedAuthority(AntirollbackAuthority):
                 try:
                     with open(self._counter_file, "r", encoding="utf-8") as f:
                         self._counter = int(f.read().strip())
-                except Exception:
-                    self._counter = 0
+                except (OSError, ValueError) as exc:
+                    raise ValueError("Anti-rollback state integrity error: invalid counter") from exc
+            elif self._pins_file.exists():
+                raise ValueError("Anti-rollback state integrity error: missing counter")
 
             if self._pins_file.exists():
                 with open(self._pins_file, "r", encoding="utf-8") as f:
@@ -170,6 +160,10 @@ class FileBackedAuthority(AntirollbackAuthority):
                         last_seq = 0
                         for p in pins_data:
                             pin_obj = Pin.from_dict(p)
+                            if pin_obj.chain_id != chain_id:
+                                raise ValueError(
+                                    f"Anti-rollback state integrity error: chain mismatch for pin {pin_obj.pin_id}"
+                                )
                             # Authenticate pin on load
                             if not self._verify_pin_signature(pin_obj):
                                 raise ValueError(
@@ -183,6 +177,8 @@ class FileBackedAuthority(AntirollbackAuthority):
                             last_seq = pin_obj.sequence
                             loaded_pins.append(pin_obj)
                         self._pins[chain_id] = loaded_pins
+            if self._counter != sum(len(pins) for pins in self._pins.values()):
+                raise ValueError("Anti-rollback state integrity error: counter does not match pin count")
 
     def _save(self) -> None:
         with self._lock:

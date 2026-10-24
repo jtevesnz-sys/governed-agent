@@ -30,7 +30,7 @@ In 1966, Jack Dennis and Earl Van Horn introduced the concept of **capability-ba
 
 In 1975, Jerome Saltzer and Michael Schroeder formulated the principle of **separation of duties**: no critical operation should be executed without independent authorization and verification across distinct components.
 
-**Governed Agent** brings these classical computer science principles to autonomous LLM execution. It replaces semantic prompt compliance with **deterministic mathematical guarantees**.
+**Governed Agent** is a reference implementation of scoped capability checks and out-of-band audits. It does not guarantee production security: its file-backed anti-rollback state permits a complete older-snapshot replay, and its default key is co-located with that state. Protect the key separately and use an independent monotonic anchor before treating it as a security gate.
 
 ---
 
@@ -68,7 +68,7 @@ This payload is signed using standard **RSA-SHA256 PKCS#1 v1.5**. When the agent
 #### Monotonic Anti-Rollback State
 Digital signatures alone do not prevent replay attacks: a compromised agent could attempt to reuse an earlier, valid capability token.
 
-To resolve this, Governed Agent introduces **monotonic sequence pinning**. State checkpoints are bound to non-decreasing sequence counters ($Seq_{n+1} > Seq_n$). If an agent attempts to replay a previously granted capability or rollback the state, the authority immediately raises:
+To check local sequence ordering, Governed Agent introduces **sequence pinning**. State checkpoints are bound to increasing sequence counters ($Seq_{n+1} > Seq_n$) relative to the currently loaded state. A repeated sequence raises the following error; restoring both file-backed state files to an older valid snapshot is not detected:
 
 ```python
 ValueError: Rollback detected: sequence 1 <= latest sequence 2
@@ -126,15 +126,15 @@ Security controls in AI systems often introduce unacceptable latency. We benchma
 * **RSA-2048 Keypair Generation:** ~12.4 ms
 * **Capability Sealing (RSA-SHA256):** ~0.42 ms
 * **Capability Verification:** ~0.08 ms
-* **Full Unit Test Suite (35 tests):** **0.84 seconds**
+* **Earlier full unit test suite (35 tests):** **0.84 seconds**; the v0.1.3 reference release passed 63 local tests with 90% coverage.
 
-Compared to LLM inference latencies (500 ms – 3,000 ms per turn), cryptographic capability verification consumes **less than 0.1% of the turn duration**. The security boundary is mathematically rigorous and computationally invisible.
+Compared to LLM inference latencies (500 ms – 3,000 ms per turn), cryptographic capability verification consumes **less than 0.1% of the turn duration**. These historical microbenchmarks do not qualify the entire reference system as a security boundary.
 
 ---
 
 ## A Focused Release Backed by a Broader Engineering Effort
 
-`governed-agent` is released as a focused Tier 1 package: roughly 1,350 lines of pure Python (`cryptography` + `pydantic`), 35 unit tests measuring 89% code coverage, a full technical whitepaper, and an end-to-end demo.
+`governed-agent` is released as a focused Tier 1 package: roughly 1,350 lines of pure Python (`cryptography` + `pydantic`), 63 local unit tests measuring 90% code coverage for v0.1.3, a technical whitepaper, and an end-to-end demo.
 
 It originates from a broader private engineering effort of roughly 20,000 lines spanning our research and agent operations at Mercenarios AI. That broader codebase includes multi-role factory lifecycles, research corpora, intake sanitization pipelines, and memory indices. We are keeping the broader operating system private for continued commercial development while making the core governance architecture available for the community to inspect, test, and adopt.
 

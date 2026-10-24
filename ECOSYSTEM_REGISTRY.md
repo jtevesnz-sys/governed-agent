@@ -38,13 +38,13 @@ This guide contains pre-formatted submission snippets, links, and text for listi
 
 ### B. PyPI (Python Package Index)
 * **Package Name:** `governed-agent`
-* **Current Version:** `0.1.2`
+* **Reference Release Version:** `0.1.3` (not production rollback-resistant without an external anchor and separately protected key)
 * **Artifact Files:**
-  * `dist/governed_agent-0.1.2-py3-none-any.whl`
-  * `dist/governed_agent-0.1.2.tar.gz`
+  * `dist/governed_agent-0.1.3-py3-none-any.whl`
+  * `dist/governed_agent-0.1.3.tar.gz`
 * **Upload Command:**
   ```bash
-  twine upload dist/*
+  twine upload dist/governed_agent-0.1.3-py3-none-any.whl dist/governed_agent-0.1.3.tar.gz
   ```
   *(Requires your PyPI API token `__token__`)*
 

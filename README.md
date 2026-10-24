@@ -1,11 +1,13 @@
 # Governed Agent
 
+> **Reference implementation (v0.1.3), not a production security gate.** The file-backed anti-rollback authority detects partial state corruption but cannot detect replay of a complete older snapshot. Its default key is stored beside the state; anyone able to read that key and write the state can forge pins. Use separately protected key custody and an independent monotonic anchor before relying on durable rollback resistance. See the Sequence-Checked Pins section below.
+
 > **Deterministic capability-based security, scope-bounded planning, and out-of-band audit for autonomous AI agents.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 35 passed](https://img.shields.io/badge/tests-35%20passed-brightgreen.svg)]()
-[![Coverage: 89%](https://img.shields.io/badge/coverage-89%25-brightgreen.svg)]()
+[![Tests: 63 passed](https://img.shields.io/badge/tests-63%20passed-brightgreen.svg)]()
+[![Coverage: 90%](https://img.shields.io/badge/coverage-90%25-brightgreen.svg)]()
 [![Whitepaper](https://img.shields.io/badge/paper-WHITE__PAPER.md-orange.svg)](WHITE_PAPER.md)
 [![arXiv LaTeX](https://img.shields.io/badge/arXiv-paper%2Fgoverned__agent__paper.tex-purple.svg)](paper/governed_agent_paper.tex)
 [![Blog Post](https://img.shields.io/badge/blog-BLOG__POST.md-blue.svg)](BLOG_POST.md)
@@ -35,10 +37,10 @@ Production LLM agent frameworks (LangChain, CrewAI, AutoGen, and tool-calling mo
 2. **Probabilistic guardrails:** Traditional safety relies on prompt instructions ("*do not delete files*") or secondary LLM filters. These are easily evaded via prompt injection or context drift.
 3. **Self-certification:** The same model executing actions is asked to verify whether its execution succeeded.
 
-**Governed Agent** replaces prompt-based compliance with **mathematical, deterministic guarantees**:
-* **Capabilities are cryptographically signed** with RSA-SHA256 tokens and monotonic anti-rollback state.
+**Governed Agent** replaces some prompt-only checks with deterministic checks under explicit key-custody, dispatcher, and storage assumptions:
+* **Capabilities are cryptographically signed** with RSA-SHA256 tokens; the supplied file-backed pin store checks sequence consistency but is not an independent monotonic anchor.
 * **Planning does not grant execution authority** (`execution_authority: False`).
-* **Independent out-of-band auditing** prevents models from grading their own homework.
+* **An out-of-band auditor** checks listed artifacts against their declared hashes when given a real artifact root; the caller must establish trust in the manifest and isolation of the auditor.
 
 ---
 
@@ -105,14 +107,16 @@ verdict = verify(
     receipt_bytes=receipt.receipt_bytes,
     signature=receipt.signature,
     trusted_expected_context={"task_id": "JOB-9102", "role": "database-migration"},
-    keypair=custodian_key,
+    key=custodian_key.public_key_pem,
 )
 
 assert verdict.status == "ACCEPT"
 ```
 
-### 2. Monotonic Anti-Rollback (`governed_agent.capability.antirollback`)
-Prevents replay attacks, counter reset, or restoration of revoked capabilities:
+`GovernedToolBoundary.invoke_tool` requires the signed request to contain exactly `{"action": tool_name, **args}`; a signature over the action alone cannot authorize different paths, payloads, or extra arguments.
+
+### 2. Sequence-Checked Pins (`governed_agent.capability.antirollback`)
+Rejects a repeated or lower sequence relative to the authority's *currently loaded* state; durable rollback resistance requires an external anchor:
 
 ```python
 from governed_agent.capability import InMemoryAuthority
@@ -124,6 +128,10 @@ pin2 = authority.create_pin(chain_id="deploy_session", checkpoint_hash="hash_v2"
 # Attempting to replay sequence 1 raises an immediate anti-rollback violation:
 # ValueError: Rollback detected: sequence 1 <= latest sequence 2
 ```
+
+`FileBackedAuthority` now accepts only pins authenticated with its configured private key. Legacy pins signed with the public fallback secret are rejected on load; do not automatically re-sign or trust them. Re-establish a trusted state under separately reviewed authority before migration. An unreadable or empty key fails closed; if a key is lost, existing pins cannot be authenticated by a replacement key.
+
+**Limits:** The file-backed counter detects partial truncation or inconsistency, but a party able to restore both `pins.json` and `counter.txt` to an older valid snapshot can still roll back the state. It is not a standalone external monotonic anchor. The default `authority.key` lives beside those files: if an attacker can read that key and write the pins, they can forge authenticated state. Keep the authority key in a separately protected trust domain and use an independent monotonic store before treating this as a rollback-resistant security gate.
 
 ### 3. Scope-Bounded Planning (`governed_agent.planning`)
 Ensures planning agents cannot execute actions or grant themselves authority:
@@ -150,19 +158,23 @@ print(f"Handoff ID: {handoff['handoff_id']}")
 print(f"Packet SHA256: {handoff['packet_sha256']}")
 ```
 
+Handoff creation and reasoning-brief rendering revalidate the supplied packet; caller-provided validation results are ignored. When `GOVERNED_AGENT_BLINK_ENABLED=false`, validation returns `FAIL` and handoffs are denied rather than issuing an unchecked `PASS`.
+
 ### 4. Independent Audit (`governed_agent.audit`)
 Enforces separation of duties by auditing build outputs against manifests without model involvement:
 
 ```python
 from governed_agent.audit import WatchTower, WatchTowerVerdict
 
-auditor = WatchTower()
-audit_result = auditor.verify(manifest_path="manifest.json")
+auditor = WatchTower(root_dir="artifacts")
+audit_result = auditor.verify("manifest.json")
 
 # Returns strict, non-negotiable verdicts: PASS, HOLD, or REVISE
 if audit_result["verdict"] != WatchTowerVerdict.PASS.value:
     raise RuntimeError(f"Audit failed with status: {audit_result['verdict']}")
 ```
+
+A full audit requires an existing artifact directory and at least one listed file. Without either, Watchtower returns a non-PASS verdict instead of treating metadata-only checks as filesystem verification. If a manifest declares `size_bytes`, the value must be a nonnegative integer matching the bytes actually read during hashing; a digest over a false size declaration cannot earn PASS.
 
 ---
 
@@ -171,7 +183,7 @@ if audit_result["verdict"] != WatchTowerVerdict.PASS.value:
 | Property | LangChain / CrewAI | Anthropic MCP | NeMo Guardrails | Governed Agent |
 | :--- | :--- | :--- | :--- | :--- |
 | **Tool Execution Authority** | Ambient | Ambient per server | Prompt/Text filter | **Cryptographic token (RSA-SHA256)** |
-| **Anti-Replay / Monotonicity** | ❌ None | ❌ None | ❌ None | **✅ Monotonic sequence pins** |
+| **Anti-Replay / Monotonicity** | ❌ None | ❌ None | ❌ None | **Sequence checks; durable rollback resistance requires external anchor** |
 | **Tamper-Evident Handoffs** | ❌ Plain text/dict | ❌ JSON-RPC | ❌ None | **✅ SHA-256 bound task packets** |
 | **Planning vs Execution Separation** | ❌ Blended | ❌ Blended | ❌ Blended | **✅ Strict (`execution_authority: False`)** |
 | **Self-Certification Prevention** | ❌ Model self-eval | ❌ None | ❌ None | **✅ Out-of-band 6-point verifier** |
