@@ -20,11 +20,14 @@ class ReceiptReplayStore:
     """
 
     def __init__(self, path: Optional[Union[str, Path]] = None):
+        """Pin one durable replay path, consulting home only when no override is configured."""
         if path is None:
-            path = os.environ.get(
-                "GOVERNED_AGENT_REPLAY_STORE_PATH",
-                str(Path.home() / ".governed_agent" / "receipt_replay.sqlite3"),
-            )
+            path = os.environ.get("GOVERNED_AGENT_REPLAY_STORE_PATH")
+            if not path:
+                try:
+                    path = Path.home() / ".governed_agent" / "receipt_replay.sqlite3"
+                except (RuntimeError, KeyError) as exc:
+                    raise ReplayStoreError("Replay storage path unavailable") from exc
         configured = Path(path)
         # Capture the execution domain once; tool-induced cwd changes must not
         # redirect later consumption into a fresh database. Keep SQLite's

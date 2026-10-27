@@ -32,6 +32,7 @@ class GovernedToolBoundary:
         max_age_seconds: int = 300,
         replay_store_path: Optional[Union[str, Path]] = None,
     ):
+        """Configure receipt verification, action policy, and shared durable consumption state."""
         self.custodian_public_pem = custodian_public_pem
         self.allowed_actions = allowed_actions or set()
         self.task_id = task_id

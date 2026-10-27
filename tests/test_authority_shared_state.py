@@ -19,6 +19,7 @@ KEY = b"shared-authority-test-only-key"
 
 @pytest.mark.parametrize("configuration", ["explicit", "environment"])
 def test_relative_authority_stays_bound_after_working_directory_change(tmp_path, monkeypatch, configuration):
+    """Changing cwd must not switch an existing authority to a separate directory with older history."""
     initial = tmp_path / "initial"
     changed = tmp_path / "changed"
     initial.mkdir()
@@ -40,6 +41,7 @@ def test_relative_authority_stays_bound_after_working_directory_change(tmp_path,
 
 
 def test_stale_writer_cannot_replace_newer_pin(tmp_path):
+    """A writer created before a newer pin must reload and reject its attempted rollback."""
     first = FileBackedAuthority(tmp_path, authority_key=KEY)
     stale = FileBackedAuthority(tmp_path, authority_key=KEY)
     first.create_pin("chain", "newer", 2)
@@ -49,6 +51,7 @@ def test_stale_writer_cannot_replace_newer_pin(tmp_path):
 
 
 def test_stale_writers_preserve_other_chains_and_readers_refresh(tmp_path):
+    """Independent instances must preserve other chains and expose newly committed history on reads."""
     first = FileBackedAuthority(tmp_path, authority_key=KEY)
     second = FileBackedAuthority(tmp_path, authority_key=KEY)
     first.create_pin("alpha", "a", 1)
@@ -61,6 +64,7 @@ def test_stale_writers_preserve_other_chains_and_readers_refresh(tmp_path):
 
 
 def test_threaded_instances_do_not_lose_updates(tmp_path):
+    """Simultaneous writers must retain every distinct chain and advance one shared counter."""
     authorities = [FileBackedAuthority(tmp_path, authority_key=KEY) for _ in range(8)]
     with ThreadPoolExecutor(max_workers=8) as executor:
         list(executor.map(lambda pair: pair[1].create_pin(str(pair[0]), "h", 1), enumerate(authorities)))
@@ -103,6 +107,7 @@ except ValueError as exc:
 
 
 def _wait_for_files(root, names, children):
+    """Wait for worker barriers with bounded time and detect children that exit before synchronization."""
     deadline = time.monotonic() + 20
     while not all((root / name).exists() for name in names):
         assert all(child.poll() is None for child in children), "worker exited before barrier"
@@ -112,6 +117,7 @@ def _wait_for_files(root, names, children):
 
 @pytest.mark.parametrize("mode", ["same", "different", "initialize"])
 def test_subprocess_writers_and_initializers_share_state(tmp_path, mode, monkeypatch):
+    """Synchronize processes to expose lost writes, duplicate sequences, or competing initial authority keys."""
     monkeypatch.delenv("GOVERNED_AGENT_AUTHORITY_KEY", raising=False)
     children = [subprocess.Popen(
         [sys.executable, "-c", _CHILD, str(tmp_path), str(worker), mode],
@@ -148,6 +154,7 @@ def test_subprocess_writers_and_initializers_share_state(tmp_path, mode, monkeyp
     ("pins.json", '{"chain": [{}]}'),
 ])
 def test_existing_instances_fail_closed_on_corrupted_disk(tmp_path, filename, content):
+    """Corrupted persisted records must block cached reads and writes without repairing or replacing evidence."""
     authority = FileBackedAuthority(tmp_path, authority_key=KEY)
     authority.create_pin("chain", "a", 1)
     (tmp_path / filename).write_text(content, encoding="utf-8")
@@ -164,6 +171,7 @@ def test_existing_instances_fail_closed_on_corrupted_disk(tmp_path, filename, co
 
 
 def test_refresh_does_not_retain_removed_chains_or_duplicate_history(tmp_path):
+    """A coherent disk refresh must replace cached history rather than retain removed or duplicate entries."""
     authority = FileBackedAuthority(tmp_path, authority_key=KEY)
     authority.create_pin("alpha", "a", 1)
     authority.create_pin("beta", "b", 1)
@@ -178,11 +186,13 @@ def test_refresh_does_not_retain_removed_chains_or_duplicate_history(tmp_path):
 
 
 def test_partial_save_failure_blocks_following_operations(tmp_path, monkeypatch):
+    """A counter replacement failure after a pin write must leave detectable inconsistency on later operations."""
     authority = FileBackedAuthority(tmp_path, authority_key=KEY)
     authority.create_pin("chain", "a", 1)
     original_replace = os.replace
 
     def refuse_counter_replace(source, destination):
+        """Fail only the counter replacement to simulate interruption between the two persisted files."""
         if Path(destination).name == "counter.txt":
             raise OSError("simulated counter write failure")
         return original_replace(source, destination)
@@ -198,6 +208,7 @@ def test_partial_save_failure_blocks_following_operations(tmp_path, monkeypatch)
 
 
 def test_existing_instance_rejects_missing_state_files(tmp_path):
+    """An active authority must reject deleted history instead of silently restarting its counter."""
     authority = FileBackedAuthority(tmp_path, authority_key=KEY)
     authority.create_pin("chain", "a", 1)
     (tmp_path / "pins.json").unlink()
@@ -207,11 +218,13 @@ def test_existing_instance_rejects_missing_state_files(tmp_path):
 
 
 def test_existing_instance_fails_closed_on_state_read_error(tmp_path, monkeypatch):
+    """Unreadable shared history must block operations while preserving the last intact disk state."""
     authority = FileBackedAuthority(tmp_path, authority_key=KEY)
     authority.create_pin("chain", "a", 1)
     original_open = builtins.open
 
     def refuse_pins_read(file, mode="r", *args, **kwargs):
+        """Deny history reads while leaving other file operations available for integrity checks."""
         if Path(file).name == "pins.json" and mode == "r":
             raise PermissionError("simulated inaccessible state")
         return original_open(file, mode, *args, **kwargs)
@@ -236,6 +249,7 @@ def test_existing_instance_fails_closed_on_state_read_error(tmp_path, monkeypatc
 def test_invalid_new_pins_cannot_poison_persisted_state(
     tmp_path, chain_id, checkpoint_hash, sequence
 ):
+    """Invalid pin fields must leave disk bytes and counters unchanged and allow a later valid append."""
     authority = FileBackedAuthority(tmp_path, authority_key=KEY)
     authority.create_pin("existing", "first", 1)
     before = {name: (tmp_path / name).read_bytes() for name in ("pins.json", "counter.txt")}
@@ -248,3 +262,80 @@ def test_invalid_new_pins_cannot_poison_persisted_state(
     reloaded = FileBackedAuthority(tmp_path, authority_key=KEY)
     assert reloaded.get_current_pin("chain").sequence == 1
     assert reloaded.get_chain_status("existing")["counter"] == 2
+
+
+@pytest.mark.parametrize("previously_used", [False, True])
+def test_key_without_history_requires_explicit_recovery_without_reset(
+    tmp_path, monkeypatch, previously_used
+):
+    """A retained key without matching history must require explicit recovery and never create replacement history."""
+    monkeypatch.delenv("GOVERNED_AGENT_AUTHORITY_KEY", raising=False)
+    key_file = tmp_path / "authority.key"
+    if previously_used:
+        authority = FileBackedAuthority(tmp_path)
+        authority.create_pin("chain", "first", 1)
+        (tmp_path / "pins.json").unlink()
+        (tmp_path / "counter.txt").unlink()
+    else:
+        # The original constructor legitimately left this legacy layout before
+        # the first pin, but it is indistinguishable from deleted used history.
+        key_file.write_bytes(KEY)
+    previous_key = key_file.read_bytes()
+    with pytest.raises(ValueError, match="integrity error") as caught:
+        FileBackedAuthority(tmp_path)
+    message = str(caught.value)
+    assert "restore the matching pins.json and counter.txt" in message
+    assert "owner-approved new authority in a separate directory" in message
+    if previously_used:
+        with pytest.raises(ValueError, match="integrity error"):
+            authority.create_pin("chain", "second", 2)
+    assert key_file.read_bytes() == previous_key
+    assert not (tmp_path / "pins.json").exists()
+    assert not (tmp_path / "counter.txt").exists()
+
+
+def test_configured_authority_directory_does_not_require_home(tmp_path, monkeypatch):
+    """An explicit environment directory must support pin creation when home lookup raises."""
+    configured = tmp_path / "configured"
+    monkeypatch.setenv("GOVERNED_AGENT_ANTIROLLBACK_DIR", str(configured))
+
+    def unavailable_home():
+        """Simulate a host without a resolvable home directory without consulting real user state."""
+        raise RuntimeError("no home directory")
+
+    monkeypatch.setattr(Path, "home", unavailable_home)
+    authority = FileBackedAuthority(authority_key=KEY)
+    authority.create_pin("chain", "first", 1)
+    assert authority.storage_path == configured.resolve()
+    assert (configured / "pins.json").exists()
+
+
+@pytest.mark.parametrize("configured", [None, ""])
+def test_unconfigured_authority_directory_uses_mock_home(tmp_path, monkeypatch, configured):
+    """Unset and empty directory overrides must use the isolated home fallback and persist usable pins."""
+    monkeypatch.chdir(tmp_path)
+    if configured is None:
+        monkeypatch.delenv("GOVERNED_AGENT_ANTIROLLBACK_DIR", raising=False)
+    else:
+        monkeypatch.setenv("GOVERNED_AGENT_ANTIROLLBACK_DIR", configured)
+    home = tmp_path / "test-home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    authority = FileBackedAuthority(authority_key=KEY)
+    assert authority.storage_path == (home / ".governed_agent" / "antirollback").resolve()
+    authority.create_pin("chain", "first", 1)
+    assert authority.get_current_pin("chain").sequence == 1
+
+
+def test_unavailable_home_has_controlled_authority_path_error(tmp_path, monkeypatch):
+    """Missing home configuration must produce an actionable error before creating authority files."""
+    monkeypatch.delenv("GOVERNED_AGENT_ANTIROLLBACK_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    def unavailable_home():
+        """Simulate a host without a resolvable home directory without consulting real user state."""
+        raise RuntimeError("no home directory")
+
+    monkeypatch.setattr(Path, "home", unavailable_home)
+    with pytest.raises(ValueError, match="GOVERNED_AGENT_ANTIROLLBACK_DIR"):
+        FileBackedAuthority(authority_key=KEY)
+    assert list(tmp_path.iterdir()) == []

@@ -323,6 +323,7 @@ def seal(request: Dict[str, Any], trusted_context: Dict[str, Any], keypair: KeyP
 
 
 def _unique_json_object(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+    """Reject duplicate JSON members before ambiguous receipt fields can be interpreted."""
     result: Dict[str, Any] = {}
     for name, value in pairs:
         if name in result:

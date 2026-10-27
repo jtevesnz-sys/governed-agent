@@ -53,7 +53,7 @@ class WatchTower:
             manifest_path = Path(manifest)
             try:
                 manifest_dict = self._load_json(manifest_path)
-            except (json.JSONDecodeError, UnicodeDecodeError, RecursionError) as exc:
+            except (ValueError, RecursionError) as exc:
                 return self._input_failure("manifest_validation", f"Invalid manifest JSON: {exc}")
             if effective_root is None:
                 effective_root = manifest_path.parent
@@ -103,6 +103,7 @@ class WatchTower:
 
     @staticmethod
     def _input_failure(name: str, details: str) -> Dict[str, Any]:
+        """Return a structured HOLD with the failed input check and no inferred audit success."""
         return {
             "verdict": WatchTowerVerdict.HOLD.value,
             "checks": [{"name": name, "status": "FAIL", "details": details}],
@@ -160,9 +161,10 @@ class WatchTower:
             return json.load(f)
 
     @staticmethod
-    def _malformed_path_failure(name: str, path: str, error: Union[ValueError, OSError]) -> Dict[str, Any]:
+    def _malformed_path_failure(name: str, path: str, error: Union[ValueError, OSError, RuntimeError]) -> Dict[str, Any]:
         # Preserve unrelated I/O failures; these codes identify invalid path names.
-        if isinstance(error, OSError) and error.errno not in {errno.EINVAL, errno.ENAMETOOLONG} and getattr(error, "winerror", None) not in {123, 161, 206}:
+        """Convert malformed names and resolution loops into failed checks while preserving unrelated I/O errors."""
+        if isinstance(error, OSError) and error.errno not in {errno.EINVAL, errno.ENAMETOOLONG, errno.ELOOP} and getattr(error, "winerror", None) not in {123, 161, 206}:
             raise error
         return {"name": name, "status": "FAIL", "details": f"Invalid artifact path {path!r}: {error}"}
 
@@ -246,6 +248,7 @@ class WatchTower:
         root_dir: Optional[Path] = None,
     ) -> Dict[str, Any]:
         # Verifies files list format and detects unlisted files on disk
+        """Compare files under an existing artifact root with the manifest, rejecting malformed filesystem names."""
         files = manifest.get("files", [])
         if not isinstance(files, list):
             return {"name": "no_unlisted_files", "status": "FAIL", "details": "'files' must be a list"}
@@ -287,6 +290,7 @@ class WatchTower:
         manifest: Dict[str, Any],
         root_dir: Optional[Path] = None,
     ) -> Dict[str, Any]:
+        """Require contained artifact files whose bytes and optional sizes match the manifest."""
         files = manifest.get("files", [])
         target_root = root_dir if root_dir is not None else self.root_dir
         if target_root is None or not target_root.is_dir():
@@ -310,7 +314,7 @@ class WatchTower:
                 return {"name": "hash_agreement", "status": "FAIL", "details": "Artifact root directory is unavailable"}
             try:
                 file_path = (target_root / rel).resolve()
-            except (ValueError, OSError) as exc:
+            except (ValueError, OSError, RuntimeError) as exc:
                 return self._malformed_path_failure("hash_agreement", rel, exc)
             try:
                 # Canonical containment check: prevent path traversal outside root_dir

@@ -95,11 +95,17 @@ class FileBackedAuthority(AntirollbackAuthority):
         storage_path: Union[str, Path, None] = None,
         authority_key: Optional[bytes] = None,
     ):
+        """Bind a stable authority directory and validate or initialize state under its shared lock."""
         if storage_path is None:
-            default_dir = os.environ.get(
-                "GOVERNED_AGENT_ANTIROLLBACK_DIR",
-                str(Path.home() / ".governed_agent" / "antirollback"),
-            )
+            default_dir = os.environ.get("GOVERNED_AGENT_ANTIROLLBACK_DIR")
+            if not default_dir:
+                try:
+                    default_dir = Path.home() / ".governed_agent" / "antirollback"
+                except (RuntimeError, OSError) as exc:
+                    raise ValueError(
+                        "Cannot determine anti-rollback authority directory; set "
+                        "GOVERNED_AGENT_ANTIROLLBACK_DIR or provide storage_path"
+                    ) from exc
             self.storage_path = Path(default_dir).resolve()
         else:
             self.storage_path = Path(storage_path).resolve()
@@ -187,6 +193,13 @@ class FileBackedAuthority(AntirollbackAuthority):
             self._pins = defaultdict(list)
             self._counter = 0
             try:
+                if (self._key_file.exists() and not self._pins_file.exists()
+                        and not self._counter_file.exists()):
+                    raise ValueError(
+                        "missing history for existing authority key; restore the matching "
+                        "pins.json and counter.txt, or create an owner-approved new authority "
+                        "in a separate directory"
+                    )
                 # Both files are mandatory, including for an empty authority.
                 with open(self._counter_file, "r", encoding="utf-8") as f:
                     counter = int(f.read().strip())
@@ -238,6 +251,7 @@ class FileBackedAuthority(AntirollbackAuthority):
                 temporary.unlink()
 
     def _save(self) -> None:
+        """Replace pins before the counter so an interrupted update fails integrity checks on reload."""
         with self._lock:
             pins_data = {chain_id: [p.to_dict() for p in pins] for chain_id, pins in self._pins.items()}
             # Pins first: a failed counter replacement leaves a count mismatch,
@@ -250,6 +264,7 @@ class FileBackedAuthority(AntirollbackAuthority):
         return datetime.now(timezone.utc)
 
     def get_current_pin(self, chain_id: str) -> Optional[Pin]:
+        """Reload shared state under lock before returning the most recent chain pin."""
         with self._shared_lock():
             self._load()
             pins = self._pins.get(chain_id, [])
@@ -258,6 +273,7 @@ class FileBackedAuthority(AntirollbackAuthority):
             return pins[-1]
 
     def get_all_pins(self, chain_id: str) -> List[Pin]:
+        """Return a history snapshot refreshed from authenticated shared state under lock."""
         with self._shared_lock():
             self._load()
             return list(self._pins.get(chain_id, []))
@@ -299,6 +315,7 @@ class FileBackedAuthority(AntirollbackAuthority):
         return True
 
     def create_pin(self, chain_id: str, checkpoint_hash: str, sequence: int) -> Pin:
+        """Validate and append a strictly newer signed pin while serializing shared-state updates."""
         with self._shared_lock():
             self._load()
             # Apply the persisted record contract before changing either cache
@@ -336,6 +353,7 @@ class FileBackedAuthority(AntirollbackAuthority):
             return pin
 
     def get_chain_status(self, chain_id: str) -> Dict[str, Any]:
+        """Report chain history and the global counter from one locked disk refresh."""
         with self._shared_lock():
             self._load()
             pins = self._pins.get(chain_id, [])

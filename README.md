@@ -145,6 +145,8 @@ pin2 = authority.create_pin(chain_id="deploy_session", checkpoint_hash="hash_v2"
 
 **Limits:** The file-backed counter detects partial truncation or inconsistency, but a party able to restore both `pins.json` and `counter.txt` to an older valid snapshot can still roll back the state. It is not a standalone external monotonic anchor. The default `authority.key` lives beside those files: if an attacker can read that key and write the pins, they can forge authenticated state. Keep the authority key in a separately protected trust domain and use an independent monotonic store before treating this as a rollback-resistant security gate.
 
+**Existing key without state:** A legacy, never-pinned authority may contain only `authority.key`; the same layout can result from lost history. The implementation cannot safely distinguish them and does not create empty replacement state. Restore the matching `pins.json` and `counter.txt`, or obtain owner approval to establish a new authority in a separate directory. Preserve the original key and history; recovery is an operator decision.
+
 ### 3. Scope-Bounded Planning (`governed_agent.planning`)
 Ensures planning agents cannot execute actions or grant themselves authority:
 
