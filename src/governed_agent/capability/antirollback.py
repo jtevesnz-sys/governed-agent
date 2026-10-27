@@ -100,9 +100,9 @@ class FileBackedAuthority(AntirollbackAuthority):
                 "GOVERNED_AGENT_ANTIROLLBACK_DIR",
                 str(Path.home() / ".governed_agent" / "antirollback"),
             )
-            self.storage_path = Path(default_dir)
+            self.storage_path = Path(default_dir).resolve()
         else:
-            self.storage_path = Path(storage_path)
+            self.storage_path = Path(storage_path).resolve()
 
         self.storage_path.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()

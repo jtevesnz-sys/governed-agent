@@ -25,7 +25,11 @@ class ReceiptReplayStore:
                 "GOVERNED_AGENT_REPLAY_STORE_PATH",
                 str(Path.home() / ".governed_agent" / "receipt_replay.sqlite3"),
             )
-        self.path = Path(path)
+        configured = Path(path)
+        # Capture the execution domain once; tool-induced cwd changes must not
+        # redirect later consumption into a fresh database. Keep SQLite's
+        # in-memory sentinel intact so consume still rejects ephemeral storage.
+        self.path = configured if str(configured) == ":memory:" else configured.resolve()
 
     def consume(self, issuer_fingerprint: str, receipt_digest: str) -> bool:
         """Commit first consumption, returning False if already consumed.

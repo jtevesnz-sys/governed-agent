@@ -125,6 +125,8 @@ assert verdict.status == "ACCEPT"
 
 The unreleased execution boundary consumes a receipt durably before calling its tool. Reusing it is denied even after an exception or process restart. All boundaries in one execution domain must share the same protected SQLite replay file: pass `replay_store_path=...`, set `GOVERNED_AGENT_REPLAY_STORE_PATH`, or use the default `~/.governed_agent/receipt_replay.sqlite3`. Preserve that history; deleting it or restoring an older copy removes replay evidence. Verification alone remains a read-only cryptographic check and does not consume execution authority. See [unreleased changes](CHANGELOG.md).
 
+Configured replay and pin-authority paths bind to an absolute location when the object is constructed, so later changes to the working directory cannot select different state.
+
 ### 2. Sequence-Checked Pins (`governed_agent.capability.antirollback`)
 Rejects a repeated or lower sequence relative to the latest stored state. File-backed instances reload under a shared process lock before reading or updating it; durable rollback resistance against full snapshot restoration still requires an external anchor:
 

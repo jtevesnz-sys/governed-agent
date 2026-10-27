@@ -256,3 +256,31 @@ def test_explicit_path_shares_replay_state_despite_environment_change(capability
     with pytest.raises(ExecutionDeniedError, match="already consumed"):
         invoke(make_boundary(key, lambda value: calls.append(value), replay_store_path=path), receipt)
     assert calls == ["approved"]
+
+
+@pytest.mark.parametrize("configuration", ["explicit", "environment"])
+def test_relative_store_stays_bound_when_tool_changes_working_directory(capability, tmp_path, monkeypatch, configuration):
+    key, receipt = capability
+    initial = tmp_path / "initial"
+    changed = tmp_path / "changed"
+    initial.mkdir()
+    changed.mkdir()
+    monkeypatch.chdir(initial)
+    kwargs = {}
+    if configuration == "explicit":
+        kwargs["replay_store_path"] = "receipt-store.sqlite3"
+    else:
+        monkeypatch.setenv("GOVERNED_AGENT_REPLAY_STORE_PATH", "receipt-store.sqlite3")
+    calls = []
+
+    def record_and_change_directory(value):
+        calls.append(value)
+        monkeypatch.chdir(changed)
+
+    boundary = make_boundary(key, record_and_change_directory, **kwargs)
+    invoke(boundary, receipt)
+    with pytest.raises(ExecutionDeniedError, match="already consumed"):
+        invoke(boundary, receipt)
+    assert calls == ["approved"]
+    assert (initial / "receipt-store.sqlite3").is_file()
+    assert not (changed / "receipt-store.sqlite3").exists()

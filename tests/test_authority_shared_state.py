@@ -17,6 +17,28 @@ from governed_agent.capability.antirollback import FileBackedAuthority
 KEY = b"shared-authority-test-only-key"
 
 
+@pytest.mark.parametrize("configuration", ["explicit", "environment"])
+def test_relative_authority_stays_bound_after_working_directory_change(tmp_path, monkeypatch, configuration):
+    initial = tmp_path / "initial"
+    changed = tmp_path / "changed"
+    initial.mkdir()
+    changed.mkdir()
+    monkeypatch.chdir(initial)
+    if configuration == "explicit":
+        authority = FileBackedAuthority("state", authority_key=KEY)
+    else:
+        monkeypatch.setenv("GOVERNED_AGENT_ANTIROLLBACK_DIR", "state")
+        authority = FileBackedAuthority(authority_key=KEY)
+    authority.create_pin("chain", "current", 2)
+    alternate = FileBackedAuthority(changed / "state", authority_key=KEY)
+    alternate.create_pin("chain", "older-separate-store", 1)
+    monkeypatch.chdir(changed)
+    assert authority.get_current_pin("chain").sequence == 2
+    authority.create_pin("chain", "next", 3)
+    assert FileBackedAuthority(initial / "state", authority_key=KEY).get_current_pin("chain").sequence == 3
+    assert alternate.get_current_pin("chain").sequence == 1
+
+
 def test_stale_writer_cannot_replace_newer_pin(tmp_path):
     first = FileBackedAuthority(tmp_path, authority_key=KEY)
     stale = FileBackedAuthority(tmp_path, authority_key=KEY)
