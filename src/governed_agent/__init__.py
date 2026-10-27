@@ -33,7 +33,7 @@ from .audit import (
 )
 from .hermes import GovernedToolBoundary, ExecutionDeniedError
 
-__version__ = "0.1.2"
+__version__ = "0.1.4"
 __author__ = "jtevesnz-sys"
 __license__ = "MIT"
 

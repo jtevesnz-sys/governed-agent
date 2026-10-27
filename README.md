@@ -1,13 +1,12 @@
 # Governed Agent
 
-> **Reference implementation (v0.1.3), not a production security gate.** The file-backed anti-rollback authority detects partial state corruption but cannot detect replay of a complete older snapshot. Its default key is stored beside the state; anyone able to read that key and write the state can forge pins. Use separately protected key custody and an independent monotonic anchor before relying on durable rollback resistance. See the Sequence-Checked Pins section below.
+> **Reference implementation (v0.1.4), not a production security gate.** The file-backed anti-rollback authority detects partial state corruption but cannot detect replay of a complete older snapshot. Its default key is stored beside the state; anyone able to read that key and write the state can forge pins. Use separately protected key custody and an independent monotonic anchor before relying on durable rollback resistance. See the Sequence-Checked Pins section below.
 
 > **Deterministic capability-based security, scope-bounded planning, and out-of-band audit for autonomous AI agents.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 63 passed](https://img.shields.io/badge/tests-63%20passed-brightgreen.svg)]()
-[![Coverage: 90%](https://img.shields.io/badge/coverage-90%25-brightgreen.svg)]()
+[![CI](https://github.com/jtevesnz-sys/governed-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/jtevesnz-sys/governed-agent/actions/workflows/ci.yml)
 [![Whitepaper](https://img.shields.io/badge/paper-WHITE__PAPER.md-orange.svg)](WHITE_PAPER.md)
 [![arXiv LaTeX](https://img.shields.io/badge/arXiv-paper%2Fgoverned__agent__paper.tex-purple.svg)](paper/governed_agent_paper.tex)
 [![Blog Post](https://img.shields.io/badge/blog-BLOG__POST.md-blue.svg)](BLOG_POST.md)
@@ -123,7 +122,7 @@ assert verdict.status == "ACCEPT"
 
 `GovernedToolBoundary.invoke_tool` requires the signed request to contain exactly `{"action": tool_name, **args}`; a signature over the action alone cannot authorize different paths, payloads, or extra arguments.
 
-The unreleased execution boundary consumes a receipt durably before calling its tool. Reusing it is denied even after an exception or process restart. All boundaries in one execution domain must share the same protected SQLite replay file: pass `replay_store_path=...`, set `GOVERNED_AGENT_REPLAY_STORE_PATH`, or use the default `~/.governed_agent/receipt_replay.sqlite3`. Preserve that history; deleting it or restoring an older copy removes replay evidence. Verification alone remains a read-only cryptographic check and does not consume execution authority. See [unreleased changes](CHANGELOG.md).
+The execution boundary consumes a receipt durably before calling its tool. Reusing it is denied even after an exception or process restart. All boundaries in one execution domain must share the same protected SQLite replay file: pass `replay_store_path=...`, set `GOVERNED_AGENT_REPLAY_STORE_PATH`, or use the default `~/.governed_agent/receipt_replay.sqlite3`. Preserve that history; deleting it or restoring an older copy removes replay evidence. Verification alone remains a read-only cryptographic check and does not consume execution authority. See the [v0.1.4 release notes](docs/releases/v0.1.4.md) for upgrade requirements and limits.
 
 Configured replay and pin-authority paths bind to an absolute location when the object is constructed, so later changes to the working directory cannot select different state.
 
