@@ -20,3 +20,4 @@ venv/
 htmlcov/
 .kcap_cache/
 .kcap_keys/
+.test-runtime/

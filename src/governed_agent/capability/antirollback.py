@@ -8,6 +8,7 @@ and freshness interval validation for capability checkpoints.
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import hashlib
@@ -16,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import threading
+import tempfile
 from typing import Any, Dict, List, Optional, Union
 import uuid
 
@@ -107,31 +109,69 @@ class FileBackedAuthority(AntirollbackAuthority):
         self._pins_file = self.storage_path / "pins.json"
         self._counter_file = self.storage_path / "counter.txt"
         self._key_file = self.storage_path / "authority.key"
-
-        if authority_key is not None:
-            self._authority_key = authority_key
-        elif self._key_file.exists():
-            # A missing/unreadable authority key must never become a public key.
-            self._authority_key = self._key_file.read_bytes()
-            if not self._authority_key:
-                raise ValueError("Anti-rollback authority key is empty")
-        else:
-            env_key = os.environ.get("GOVERNED_AGENT_AUTHORITY_KEY")
-            if env_key:
-                self._authority_key = env_key.encode("utf-8")
-            else:
-                if self._pins_file.exists() or self._counter_file.exists():
-                    raise ValueError("Anti-rollback state integrity error: missing authority key")
-                self._authority_key = os.urandom(32)
-                self._key_file.write_bytes(self._authority_key)
-
-        if not isinstance(self._authority_key, bytes) or not self._authority_key:
-            raise ValueError("Anti-rollback authority key must be nonempty bytes")
-
+        self._lock_file = self.storage_path / "authority.lock"
         self._pins: Dict[str, List[Pin]] = defaultdict(list)
         self._counter = 0
 
-        self._load()
+        # Key selection and initial state creation participate in the same lock
+        # as reads/writes: concurrent constructors must not replace each other's key.
+        with self._shared_lock():
+            had_key = self._key_file.exists()
+            had_state = self._pins_file.exists() or self._counter_file.exists()
+            if authority_key is not None:
+                self._authority_key = authority_key
+            elif had_key:
+                self._authority_key = self._key_file.read_bytes()
+                if not self._authority_key:
+                    raise ValueError("Anti-rollback authority key is empty")
+            else:
+                env_key = os.environ.get("GOVERNED_AGENT_AUTHORITY_KEY")
+                if env_key:
+                    self._authority_key = env_key.encode("utf-8")
+                else:
+                    if had_state:
+                        raise ValueError("Anti-rollback state integrity error: missing authority key")
+                    self._authority_key = os.urandom(32)
+                    self._atomic_write(self._key_file, self._authority_key)
+
+            if not isinstance(self._authority_key, bytes) or not self._authority_key:
+                raise ValueError("Anti-rollback authority key must be nonempty bytes")
+
+            if not had_state and not had_key:
+                self._save()
+            self._load()
+
+    @contextmanager
+    def _shared_lock(self):
+        """Serialize cooperating threads/processes using a stable, never-replaced file.
+
+        Open a separate descriptor per operation, including after a fork. Public
+        operations acquire this once; nested acquisition would deadlock on POSIX.
+        The instance RLock also prevents concurrent use of one object's cache.
+        """
+        with self._lock:
+            with open(self._lock_file, "a+b") as lock_file:
+                if os.name == "nt":
+                    import msvcrt
+
+                    lock_file.seek(0, os.SEEK_END)
+                    if lock_file.tell() == 0:
+                        lock_file.write(b"\0")
+                        lock_file.flush()
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    if os.name == "nt":
+                        lock_file.seek(0)
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def _sign(self, data: str) -> str:
         return hmac.new(self._authority_key, data.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -142,65 +182,84 @@ class FileBackedAuthority(AntirollbackAuthority):
         return hmac.compare_digest(pin.authority_signature, self._sign(pin_data))
 
     def _load(self) -> None:
+        """Reload under the caller's shared lock; never retain a stale cache."""
         with self._lock:
-            if self._counter_file.exists():
-                try:
-                    with open(self._counter_file, "r", encoding="utf-8") as f:
-                        self._counter = int(f.read().strip())
-                except (OSError, ValueError) as exc:
-                    raise ValueError("Anti-rollback state integrity error: invalid counter") from exc
-            elif self._pins_file.exists():
-                raise ValueError("Anti-rollback state integrity error: missing counter")
-
-            if self._pins_file.exists():
+            self._pins = defaultdict(list)
+            self._counter = 0
+            try:
+                # Both files are mandatory, including for an empty authority.
+                with open(self._counter_file, "r", encoding="utf-8") as f:
+                    counter = int(f.read().strip())
+                if counter < 0:
+                    raise ValueError("negative counter")
                 with open(self._pins_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    for chain_id, pins_data in data.items():
-                        loaded_pins = []
-                        last_seq = 0
-                        for p in pins_data:
-                            pin_obj = Pin.from_dict(p)
-                            if pin_obj.chain_id != chain_id:
-                                raise ValueError(
-                                    f"Anti-rollback state integrity error: chain mismatch for pin {pin_obj.pin_id}"
-                                )
-                            # Authenticate pin on load
-                            if not self._verify_pin_signature(pin_obj):
-                                raise ValueError(
-                                    f"Anti-rollback state integrity error: invalid signature for pin {pin_obj.pin_id} in chain {chain_id}"
-                                )
-                            # Monotonic sequence integrity
-                            if pin_obj.sequence <= last_seq:
-                                raise ValueError(
-                                    f"Anti-rollback state integrity error: sequence non-monotonic ({pin_obj.sequence} <= {last_seq})"
-                                )
-                            last_seq = pin_obj.sequence
-                            loaded_pins.append(pin_obj)
-                        self._pins[chain_id] = loaded_pins
-            if self._counter != sum(len(pins) for pins in self._pins.values()):
-                raise ValueError("Anti-rollback state integrity error: counter does not match pin count")
+                if not isinstance(data, dict):
+                    raise ValueError("pins must be an object")
+                loaded = defaultdict(list)
+                for chain_id, pins_data in data.items():
+                    if not isinstance(pins_data, list):
+                        raise ValueError("chain pins must be a list")
+                    last_seq = 0
+                    for p in pins_data:
+                        if not isinstance(p, dict):
+                            raise ValueError("pin must be an object")
+                        pin_obj = Pin.from_dict(p)
+                        if (type(pin_obj.sequence) is not int or pin_obj.sequence <= last_seq
+                                or not isinstance(p.get("pin_id"), str) or not p["pin_id"]
+                                or any(not isinstance(getattr(pin_obj, name), str) for name in
+                                       ("chain_id", "checkpoint_hash", "timestamp_utc", "authority_signature"))):
+                            raise ValueError("invalid pin fields or non-monotonic sequence")
+                        if pin_obj.chain_id != chain_id:
+                            raise ValueError("chain mismatch")
+                        if not self._verify_pin_signature(pin_obj):
+                            raise ValueError("invalid pin signature")
+                        last_seq = pin_obj.sequence
+                        loaded[chain_id].append(pin_obj)
+                if counter != sum(len(pins) for pins in loaded.values()):
+                    raise ValueError("counter does not match pin count")
+            except (OSError, ValueError, TypeError, UnicodeError) as exc:
+                raise ValueError(f"Anti-rollback state integrity error: {exc}") from exc
+            self._pins = loaded
+            self._counter = counter
+
+    def _atomic_write(self, destination: Path, content: bytes) -> None:
+        """Replace one complete file; this is not a two-file crash transaction."""
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=self.storage_path, prefix=".authority-", delete=False) as f:
+                temporary = Path(f.name)
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, destination)
+        finally:
+            if temporary is not None and temporary.exists():
+                temporary.unlink()
 
     def _save(self) -> None:
         with self._lock:
             pins_data = {chain_id: [p.to_dict() for p in pins] for chain_id, pins in self._pins.items()}
-            with open(self._pins_file, "w", encoding="utf-8") as f:
-                json.dump(pins_data, f, indent=2)
-
-            with open(self._counter_file, "w", encoding="utf-8") as f:
-                f.write(str(self._counter))
+            # Pins first: a failed counter replacement leaves a count mismatch,
+            # so subsequent operations reject the partial update rather than
+            # silently recovering an earlier accepted authority state.
+            self._atomic_write(self._pins_file, json.dumps(pins_data, indent=2).encode("utf-8"))
+            self._atomic_write(self._counter_file, str(self._counter).encode("utf-8"))
 
     def get_trusted_now_utc(self) -> datetime:
         return datetime.now(timezone.utc)
 
     def get_current_pin(self, chain_id: str) -> Optional[Pin]:
-        with self._lock:
+        with self._shared_lock():
+            self._load()
             pins = self._pins.get(chain_id, [])
             if not pins:
                 return None
             return pins[-1]
 
     def get_all_pins(self, chain_id: str) -> List[Pin]:
-        with self._lock:
+        with self._shared_lock():
+            self._load()
             return list(self._pins.get(chain_id, []))
 
     def verify_freshness(self, checkpoint: Checkpoint, max_age_seconds: int) -> bool:
@@ -240,8 +299,16 @@ class FileBackedAuthority(AntirollbackAuthority):
         return True
 
     def create_pin(self, chain_id: str, checkpoint_hash: str, sequence: int) -> Pin:
-        with self._lock:
-            latest = self.get_current_pin(chain_id)
+        with self._shared_lock():
+            self._load()
+            # Apply the persisted record contract before changing either cache
+            # or disk; an invalid new pin must not poison the next reload.
+            if not isinstance(chain_id, str) or not isinstance(checkpoint_hash, str):
+                raise ValueError("Pin chain_id and checkpoint_hash must be strings")
+            if type(sequence) is not int or sequence < 1:
+                raise ValueError("Pin sequence must be a positive integer")
+            pins = self._pins.get(chain_id, [])
+            latest = pins[-1] if pins else None
             if latest and sequence <= latest.sequence:
                 raise ValueError(
                     f"Rollback detected: sequence {sequence} <= latest sequence {latest.sequence}"
@@ -269,7 +336,8 @@ class FileBackedAuthority(AntirollbackAuthority):
             return pin
 
     def get_chain_status(self, chain_id: str) -> Dict[str, Any]:
-        with self._lock:
+        with self._shared_lock():
+            self._load()
             pins = self._pins.get(chain_id, [])
             return {
                 "chain_id": chain_id,

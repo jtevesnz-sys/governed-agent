@@ -24,6 +24,14 @@ The distinction is deliberate: **a focused release that shows the engineering cl
 
 ---
 
+## Development history and operational examples
+
+Governed Agent is the public reference implementation within a wider body of work on project-scoped coordination, research controls, agent maintenance and evaluation. The [development history](docs/DEVELOPMENT_HISTORY.md) distinguishes public implementation evidence from retained internal designs and run records.
+
+One [maintenance case study](docs/case-studies/MAINTENANCE_REPAIR_20261022.md) records Technician diagnosis, a bounded Codex correction and a checked system report. It illustrates the operating method while preserving the limits of a single, internally recorded incident. Comparative agent performance and production qualification remain unestablished.
+
+---
+
 ## Technical Whitepaper
 
 For the formal mathematical specification, threat model, cryptographic formulation, and benchmark evaluation, read the **[Technical Whitepaper (WHITE_PAPER.md)](WHITE_PAPER.md)**.
@@ -115,8 +123,10 @@ assert verdict.status == "ACCEPT"
 
 `GovernedToolBoundary.invoke_tool` requires the signed request to contain exactly `{"action": tool_name, **args}`; a signature over the action alone cannot authorize different paths, payloads, or extra arguments.
 
+The unreleased execution boundary consumes a receipt durably before calling its tool. Reusing it is denied even after an exception or process restart. All boundaries in one execution domain must share the same protected SQLite replay file: pass `replay_store_path=...`, set `GOVERNED_AGENT_REPLAY_STORE_PATH`, or use the default `~/.governed_agent/receipt_replay.sqlite3`. Preserve that history; deleting it or restoring an older copy removes replay evidence. Verification alone remains a read-only cryptographic check and does not consume execution authority. See [unreleased changes](CHANGELOG.md).
+
 ### 2. Sequence-Checked Pins (`governed_agent.capability.antirollback`)
-Rejects a repeated or lower sequence relative to the authority's *currently loaded* state; durable rollback resistance requires an external anchor:
+Rejects a repeated or lower sequence relative to the latest stored state. File-backed instances reload under a shared process lock before reading or updating it; durable rollback resistance against full snapshot restoration still requires an external anchor:
 
 ```python
 from governed_agent.capability import InMemoryAuthority

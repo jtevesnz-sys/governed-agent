@@ -8,6 +8,7 @@ Prevents models from self-certifying their work.
 from __future__ import annotations
 
 from enum import Enum
+import errno
 import hashlib
 import json
 from pathlib import Path
@@ -44,17 +45,24 @@ class WatchTower:
         5. Cross-lane independence check
         6. Prohibited residue detection
         """
-        dep_graph = dep_graph or {}
-        lane_contracts = lane_contracts or []
+        dep_graph = {} if dep_graph is None else dep_graph
+        lane_contracts = [] if lane_contracts is None else lane_contracts
         effective_root = Path(root_dir) if root_dir else self.root_dir
 
         if isinstance(manifest, (Path, str)):
             manifest_path = Path(manifest)
-            manifest_dict = self._load_json(manifest_path)
+            try:
+                manifest_dict = self._load_json(manifest_path)
+            except (json.JSONDecodeError, UnicodeDecodeError, RecursionError) as exc:
+                return self._input_failure("manifest_validation", f"Invalid manifest JSON: {exc}")
             if effective_root is None:
                 effective_root = manifest_path.parent
         else:
             manifest_dict = manifest
+
+        shape_error = self._input_shape_error(manifest_dict, dep_graph, lane_contracts)
+        if shape_error is not None:
+            return self._input_failure(*shape_error)
 
         checks: List[Dict[str, Any]] = []
         independence_violations: List[str] = []
@@ -93,9 +101,70 @@ class WatchTower:
             "prohibited_residue_found": residue_found,
         }
 
+    @staticmethod
+    def _input_failure(name: str, details: str) -> Dict[str, Any]:
+        return {
+            "verdict": WatchTowerVerdict.HOLD.value,
+            "checks": [{"name": name, "status": "FAIL", "details": details}],
+            "independence_violations": [],
+            "prohibited_residue_found": False,
+        }
+
+    @staticmethod
+    def _input_shape_error(manifest: Any, dep_graph: Any, lane_contracts: Any) -> Optional[Tuple[str, str]]:
+        """Validate shapes consumed by checks before hashing or filesystem work."""
+        if type(manifest) is not dict:
+            return "manifest_validation", "Manifest must be an object"
+        for field in ("format", "format_version", "convergence_id", "complete_set_sha256"):
+            if field in manifest and type(manifest[field]) is not str:
+                return "manifest_validation", f"'{field}' must be a string"
+        for field in ("files", "lane_records"):
+            records = manifest.get(field, [])
+            if type(records) is not list or any(type(record) is not dict for record in records):
+                return "manifest_validation", f"'{field}' must be a list of objects"
+        for entry in manifest.get("files", []):
+            for field in ("relative_path", "lane_id", "sha256"):
+                if field in entry and type(entry[field]) is not str:
+                    return "manifest_validation", f"File '{field}' must be a string"
+            if "\x00" in entry.get("relative_path", ""):
+                return "manifest_validation", "File 'relative_path' cannot contain NUL"
+        for record in manifest.get("lane_records", []):
+            if "lane_id" in record and type(record["lane_id"]) is not str:
+                return "manifest_validation", "Lane record 'lane_id' must be a string"
+
+        if type(dep_graph) is not dict:
+            return "required_lanes", "Dependency graph must be an object"
+        nodes = dep_graph.get("nodes", [])
+        if type(nodes) is not list or any(type(node) is not dict for node in nodes):
+            return "required_lanes", "Dependency graph 'nodes' must be a list of objects"
+        for node in nodes:
+            if "node_type" in node and type(node["node_type"]) is not str:
+                return "required_lanes", "Dependency node 'node_type' must be a string"
+            if "lane_id" in node and type(node["lane_id"]) is not str:
+                return "required_lanes", "Dependency node 'lane_id' must be a string"
+            if node.get("node_type") == "LANE" and "lane_id" not in node:
+                return "required_lanes", "LANE dependency node requires 'lane_id'"
+
+        if type(lane_contracts) is not list or any(type(contract) is not dict for contract in lane_contracts):
+            return "independence", "Lane contracts must be a list of objects"
+        for contract in lane_contracts:
+            for field in ("lane_id", "independence_group"):
+                if field in contract and type(contract[field]) is not str:
+                    return "independence", f"Lane contract '{field}' must be a string"
+            if contract.get("independence_group") and "lane_id" not in contract:
+                return "independence", "Independent lane contract requires 'lane_id'"
+        return None
+
     def _load_json(self, path: Path) -> Dict[str, Any]:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
+
+    @staticmethod
+    def _malformed_path_failure(name: str, path: str, error: Union[ValueError, OSError]) -> Dict[str, Any]:
+        # Preserve unrelated I/O failures; these codes identify invalid path names.
+        if isinstance(error, OSError) and error.errno not in {errno.EINVAL, errno.ENAMETOOLONG} and getattr(error, "winerror", None) not in {123, 161, 206}:
+            raise error
+        return {"name": name, "status": "FAIL", "details": f"Invalid artifact path {path!r}: {error}"}
 
     def _check_complete_set_hash(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
         complete_set_sha = manifest.get("complete_set_sha256")
@@ -193,7 +262,11 @@ class WatchTower:
 
         unlisted = []
         for p in target_root.rglob("*"):
-            if p.is_file():
+            try:
+                is_file = p.is_file()
+            except (ValueError, OSError) as exc:
+                return self._malformed_path_failure("no_unlisted_files", str(p), exc)
+            if is_file:
                 rel_posix = p.relative_to(target_root).as_posix()
                 # Skip ignore files / directories or manifest itself if located in root
                 if rel_posix in {".git", ".gitignore", "manifest.json"}:
@@ -235,7 +308,10 @@ class WatchTower:
 
             if not target_root.is_dir():
                 return {"name": "hash_agreement", "status": "FAIL", "details": "Artifact root directory is unavailable"}
-            file_path = (target_root / rel).resolve()
+            try:
+                file_path = (target_root / rel).resolve()
+            except (ValueError, OSError) as exc:
+                return self._malformed_path_failure("hash_agreement", rel, exc)
             try:
                 # Canonical containment check: prevent path traversal outside root_dir
                 file_path.relative_to(target_root.resolve())
@@ -246,7 +322,11 @@ class WatchTower:
                     "details": f"Path traversal escape detected for file: {rel}",
                 }
 
-            if not file_path.is_file():
+            try:
+                is_file = file_path.is_file()
+            except (ValueError, OSError) as exc:
+                return self._malformed_path_failure("hash_agreement", rel, exc)
+            if not is_file:
                 return {
                     "name": "hash_agreement",
                     "status": "FAIL",
@@ -255,10 +335,13 @@ class WatchTower:
 
             h = hashlib.sha256()
             actual_size = 0
-            with open(file_path, "rb") as fp:
-                for chunk in iter(lambda: fp.read(8192), b""):
-                    actual_size += len(chunk)
-                    h.update(chunk)
+            try:
+                with open(file_path, "rb") as fp:
+                    for chunk in iter(lambda: fp.read(8192), b""):
+                        actual_size += len(chunk)
+                        h.update(chunk)
+            except (ValueError, OSError) as exc:
+                return self._malformed_path_failure("hash_agreement", rel, exc)
             if "size_bytes" in f and actual_size != f["size_bytes"]:
                 return {
                     "name": "hash_agreement",
