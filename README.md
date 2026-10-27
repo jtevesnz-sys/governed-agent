@@ -24,6 +24,14 @@ The distinction is deliberate: **a focused release that shows the engineering cl
 
 ---
 
+## Development history and operational examples
+
+Governed Agent is the public reference implementation within a wider body of work on project-scoped coordination, research controls, agent maintenance and evaluation. The [development history](docs/DEVELOPMENT_HISTORY.md) distinguishes public implementation evidence from retained internal designs and run records.
+
+One [maintenance case study](docs/case-studies/MAINTENANCE_REPAIR_20261022.md) records Technician diagnosis, a bounded Codex correction and a checked system report. It illustrates the operating method while preserving the limits of a single, internally recorded incident. Comparative agent performance and production qualification remain unestablished.
+
+---
+
 ## Technical Whitepaper
 
 For the formal mathematical specification, threat model, cryptographic formulation, and benchmark evaluation, read the **[Technical Whitepaper (WHITE_PAPER.md)](WHITE_PAPER.md)**.
@@ -115,8 +123,12 @@ assert verdict.status == "ACCEPT"
 
 `GovernedToolBoundary.invoke_tool` requires the signed request to contain exactly `{"action": tool_name, **args}`; a signature over the action alone cannot authorize different paths, payloads, or extra arguments.
 
+The unreleased execution boundary consumes a receipt durably before calling its tool. Reusing it is denied even after an exception or process restart. All boundaries in one execution domain must share the same protected SQLite replay file: pass `replay_store_path=...`, set `GOVERNED_AGENT_REPLAY_STORE_PATH`, or use the default `~/.governed_agent/receipt_replay.sqlite3`. Preserve that history; deleting it or restoring an older copy removes replay evidence. Verification alone remains a read-only cryptographic check and does not consume execution authority. See [unreleased changes](CHANGELOG.md).
+
+Configured replay and pin-authority paths bind to an absolute location when the object is constructed, so later changes to the working directory cannot select different state.
+
 ### 2. Sequence-Checked Pins (`governed_agent.capability.antirollback`)
-Rejects a repeated or lower sequence relative to the authority's *currently loaded* state; durable rollback resistance requires an external anchor:
+Rejects a repeated or lower sequence relative to the latest stored state. File-backed instances reload under a shared process lock before reading or updating it; durable rollback resistance against full snapshot restoration still requires an external anchor:
 
 ```python
 from governed_agent.capability import InMemoryAuthority
@@ -132,6 +144,8 @@ pin2 = authority.create_pin(chain_id="deploy_session", checkpoint_hash="hash_v2"
 `FileBackedAuthority` now accepts only pins authenticated with its configured private key. Legacy pins signed with the public fallback secret are rejected on load; do not automatically re-sign or trust them. Re-establish a trusted state under separately reviewed authority before migration. An unreadable or empty key fails closed; if a key is lost, existing pins cannot be authenticated by a replacement key.
 
 **Limits:** The file-backed counter detects partial truncation or inconsistency, but a party able to restore both `pins.json` and `counter.txt` to an older valid snapshot can still roll back the state. It is not a standalone external monotonic anchor. The default `authority.key` lives beside those files: if an attacker can read that key and write the pins, they can forge authenticated state. Keep the authority key in a separately protected trust domain and use an independent monotonic store before treating this as a rollback-resistant security gate.
+
+**Existing key without state:** A legacy, never-pinned authority may contain only `authority.key`; the same layout can result from lost history. The implementation cannot safely distinguish them and does not create empty replacement state. Restore the matching `pins.json` and `counter.txt`, or obtain owner approval to establish a new authority in a separate directory. Preserve the original key and history; recovery is an operator decision.
 
 ### 3. Scope-Bounded Planning (`governed_agent.planning`)
 Ensures planning agents cannot execute actions or grant themselves authority:

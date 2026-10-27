@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
@@ -321,6 +322,48 @@ def seal(request: Dict[str, Any], trusted_context: Dict[str, Any], keypair: KeyP
     )
 
 
+def _unique_json_object(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+    """Reject duplicate JSON members before ambiguous receipt fields can be interpreted."""
+    result: Dict[str, Any] = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("Duplicate receipt JSON key")
+        result[name] = value
+    return result
+
+
+def _is_json_value(value: Any, active: Optional[Set[int]] = None) -> bool:
+    """Accept only finite JSON values, without custom Python equality or cycles."""
+    if type(value) in (str, bool, int, type(None)):
+        return True
+    if type(value) is float:
+        return math.isfinite(value)
+    if type(value) not in (dict, list):
+        return False
+    active = set() if active is None else active
+    identity = id(value)
+    if identity in active:
+        return False
+    active.add(identity)
+    try:
+        if type(value) is dict:
+            return all(type(key) is str and _is_json_value(item, active) for key, item in value.items())
+        return all(_is_json_value(item, active) for item in value)
+    finally:
+        active.remove(identity)
+
+
+def _json_equal(left: Any, right: Any) -> bool:
+    """Compare validated JSON recursively, preserving every scalar type."""
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        return left.keys() == right.keys() and all(_json_equal(value, right[key]) for key, value in left.items())
+    if type(left) is list:
+        return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
+    return left == right
+
+
 def verify(
     receipt_bytes: bytes,
     signature: bytes,
@@ -335,14 +378,28 @@ def verify(
     Accepts KeyPair, PEM public key string, or RSAPublicKey object.
     Enforces optional max_age_seconds freshness and allowed_actions validation.
     """
+    if not isinstance(receipt_bytes, (bytes, bytearray)):
+        return VerifyResult(status="HOLD", reason="Invalid receipt JSON")
+    receipt_bytes = memoryview(receipt_bytes).tobytes()
     try:
-        receipt = json.loads(receipt_bytes.decode("utf-8"))
-    except Exception:
+        receipt = json.loads(receipt_bytes.decode("utf-8"), object_pairs_hook=_unique_json_object)
+    except (ValueError, RecursionError):
         return VerifyResult(status="HOLD", reason="Invalid receipt JSON")
 
+    if type(receipt) is not dict or type(receipt.get("request")) is not dict or type(receipt.get("trusted_context")) is not dict:
+        return VerifyResult(status="HOLD", reason="Receipt, request and trusted_context must be JSON objects")
+    try:
+        if not _is_json_value(receipt) or type(trusted_expected_context) is not dict or not _is_json_value(trusted_expected_context):
+            return VerifyResult(status="HOLD", reason="Context and receipt must contain finite JSON values")
+        context_matches = _json_equal(receipt["trusted_context"], trusted_expected_context)
+    except RecursionError:
+        return VerifyResult(status="HOLD", reason="Receipt or expected context exceeds JSON nesting limit")
+
     # Action allowlist enforcement if provided
-    request_data = receipt.get("request", {})
+    request_data = receipt["request"]
     action = request_data.get("action")
+    if "action" in request_data and type(action) is not str:
+        return VerifyResult(status="HOLD", reason="Request action must be a string")
     if allowed_actions is not None:
         if not action or action not in allowed_actions:
             return VerifyResult(
@@ -371,7 +428,7 @@ def verify(
     key_id = getattr(key, "key_id", "")
     fingerprint = getattr(key, "fingerprint_sha256", "")
 
-    if receipt.get("trusted_context") != trusted_expected_context:
+    if not context_matches:
         return VerifyResult(
             status="HOLD",
             reason="Trusted context mismatch",
