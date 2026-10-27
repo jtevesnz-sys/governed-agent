@@ -210,7 +210,7 @@ def run_mcp_server() -> None:
                 resp = {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "governed-agent-planning", "version": "0.1.2"},
+                    "serverInfo": {"name": "governed-agent-planning", "version": "0.1.4"},
                 }
             elif method == "tools/list":
                 resp = {
